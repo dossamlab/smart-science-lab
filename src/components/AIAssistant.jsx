@@ -60,15 +60,16 @@ export default function AIAssistant() {
 
     try {
       // 1. Gemini API 시도
-      const aiResponse = await getChatResponse(userText);
+      const aiResponse = await getChatResponse(userText, 'safety', (notice) =>
+        setMessages(prev => [...prev, { role: 'assistant', text: `⚠️ ${notice}` }])
+      );
       setMessages(prev => [...prev, { role: 'assistant', text: aiResponse }]);
     } catch (error) {
       console.warn("Gemini API 활용 불가, 로컬 엔진으로 전환:", error.message);
 
-      let fallbackMsg = "";
-      if (error.message === "API_KEY_NOT_SET") {
-        fallbackMsg = "⚠️ API 키가 설정되지 않아 로컬 엔진으로 답변합니다.\n\n";
-      }
+      const fallbackMsg = error.message === "API_KEY_NOT_SET"
+        ? "⚠️ API 키가 설정되지 않아 로컬 엔진으로 답변합니다.\n\n"
+        : `⚠️ ${error.message} 로컬 엔진으로 답변합니다.\n\n`;
 
       // 2. 실패 시 로컬 엔진 폴백
       setTimeout(() => {

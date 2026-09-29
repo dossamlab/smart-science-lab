@@ -1,18 +1,83 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import { safetyData } from "../data/safetyData";
 
 const STORAGE_KEY = 'lab_on_config_v2';
+
+// Tried in order. Free tier limits are per model, so when one is blocked the next is often still open.
+const MODEL_CHAIN = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'];
 
 function getConfig() {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     return stored ? JSON.parse(stored) : {};
-  } catch (e) {
+  } catch {
     return {};
   }
 }
 
-export async function getChatResponse(userInput, agentType = 'safety') {
+const errorText = (error) => (error instanceof Error ? error.message : String(error));
+const errorStatus = (error) =>
+  error?.status ?? Number(/"code"\s*:\s*(\d{3})/.exec(errorText(error))?.[1]);
+
+/** Failure worth trying the next model for; null when switching models would not help (bad key etc). */
+function classifyFailure(error) {
+  const status = errorStatus(error);
+  if (status === 503 || status === 500) return 'overloaded';
+  // Per-minute and per-day quotas share 429; only the quota name (…PerDay…) tells them apart.
+  if (status === 429) return /PerDay/i.test(errorText(error)) ? 'daily' : 'minute';
+  // Newer models may not be open yet for this key or region.
+  if (status === 404) return 'unavailable';
+  return null;
+}
+
+function fatalMessage(error) {
+  const status = errorStatus(error);
+  if (/API key not valid|API_KEY_INVALID/i.test(errorText(error)) || status === 401)
+    return 'API 키가 올바르지 않습니다. 관리자 설정에서 키를 다시 확인해주세요.';
+  if (status === 403) return '이 API 키로는 Gemini를 사용할 수 없습니다. 키의 권한(Generative Language API)을 확인해주세요.';
+  if (error instanceof TypeError) return '인터넷 연결을 확인해주세요. AI 서버에 연결하지 못했습니다.';
+  return `AI 호출에 실패했습니다${status ? ` (오류 코드 ${status})` : ''}. 잠시 후 다시 시도해주세요.`;
+}
+
+const modelName = (model) => model.replace(/^gemini-([\d.]+)-flash$/, (_, v) => `Gemini ${v} Flash`);
+
+function failureReason(failure, model) {
+  const name = modelName(model);
+  switch (failure) {
+    case 'overloaded': return `${name} 서버에 요청이 몰려 응답하지 못했습니다.`;
+    case 'minute': return `${name}의 분당 요청 한도를 넘었습니다.`;
+    case 'daily': return `${name}의 오늘 무료 사용량을 모두 썼습니다.`;
+    case 'unavailable': return `이 API 키로는 ${name}를 사용할 수 없습니다.`;
+  }
+}
+
+function exhaustionMessage(failures) {
+  if (failures.every(f => f === 'daily'))
+    return '오늘 사용할 수 있는 무료 AI 호출을 모두 썼습니다. 한도는 매일 오후 4~5시경(태평양 시간 자정)에 초기화됩니다.';
+  if (failures.every(f => f === 'unavailable'))
+    return '이 API 키로 사용할 수 있는 Gemini 모델이 없습니다. 관리자 설정에서 키를 다시 확인해주세요.';
+  return '지금 AI 서버에 요청이 몰려 있습니다. 1~2분 뒤에 다시 시도해주세요.';
+}
+
+/** Tries MODEL_CHAIN in order and reports each switch with its reason via onNotice. */
+export async function generateWithFallback(ai, params, onNotice = () => {}) {
+  const failures = [];
+  for (const [i, model] of MODEL_CHAIN.entries()) {
+    try {
+      return await ai.models.generateContent({ ...params, model });
+    } catch (error) {
+      const failure = classifyFailure(error);
+      if (!failure) throw new Error(fatalMessage(error), { cause: error });
+      console.warn(`[Gemini API] ${model} 실패(${failure})`, error);
+      failures.push(failure);
+      const next = MODEL_CHAIN[i + 1];
+      if (next) onNotice(`${failureReason(failure, model)} ${modelName(next)}로 다시 시도합니다. (${i + 2}/${MODEL_CHAIN.length})`);
+    }
+  }
+  throw new Error(exhaustionMessage(failures));
+}
+
+export async function getChatResponse(userInput, agentType = 'safety', onNotice) {
   const config = getConfig();
   const apiKey = config.geminiApiKey?.trim();
   const schoolName = config.schoolName?.trim() || '우리 학교';
@@ -22,7 +87,7 @@ export async function getChatResponse(userInput, agentType = 'safety') {
     throw new Error("API_KEY_NOT_SET");
   }
 
-  const genAI = new GoogleGenerativeAI(apiKey);
+  const ai = new GoogleGenAI({ apiKey });
 
   const baseData = safetyData
     .map(item => `카테고리: ${item.category}\n제목: ${item.title}\n내용: ${item.content}`)
@@ -94,16 +159,9 @@ ${baseData}${schoolSection}
 
   const systemInstruction = AGENT_SYSTEM_INSTRUCTIONS[agentType] || AGENT_SYSTEM_INSTRUCTIONS.safety;
 
-  const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
-    systemInstruction: systemInstruction,
-  });
-
-  try {
-    const result = await model.generateContent(userInput);
-    return result.response.text();
-  } catch (error) {
-    console.error("Gemini API Error:", error);
-    throw error;
-  }
+  const response = await generateWithFallback(ai, {
+    contents: userInput,
+    config: { systemInstruction },
+  }, onNotice);
+  return response.text;
 }
