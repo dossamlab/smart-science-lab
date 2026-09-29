@@ -4,3 +4,8 @@
 
 [build.environment]
   NODE_VERSION = "22"
+
+# School defaults are set in the Netlify UI (Site configuration > Environment variables), not here:
+#   VITE_SCHOOL_NAME, VITE_SCHOOL_PHONE, VITE_ADMIN_PHONE, VITE_HOSPITAL_NAME, VITE_HOSPITAL_PHONE,
+#   VITE_MSDS_SHEET_ID, VITE_RESERVATION_API_URL
+# Never add a Gemini key or personal phone numbers: VITE_* values are public in the bundle.

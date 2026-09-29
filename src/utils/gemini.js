@@ -1,19 +1,9 @@
 import { GoogleGenAI } from "@google/genai";
 import { safetyData } from "../data/safetyData";
-
-const STORAGE_KEY = 'lab_on_config_v2';
+import { loadConfig } from "../context/AppConfigContext";
 
 // Tried in order. Free tier limits are per model, so when one is blocked the next is often still open.
 const MODEL_CHAIN = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'];
-
-function getConfig() {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? JSON.parse(stored) : {};
-  } catch {
-    return {};
-  }
-}
 
 const errorText = (error) => (error instanceof Error ? error.message : String(error));
 const errorStatus = (error) =>
@@ -78,7 +68,7 @@ export async function generateWithFallback(ai, params, onNotice = () => {}) {
 }
 
 export async function getChatResponse(userInput, agentType = 'safety', onNotice) {
-  const config = getConfig();
+  const config = loadConfig();
   const apiKey = config.geminiApiKey?.trim();
   const schoolName = config.schoolName?.trim() || '우리 학교';
   const schoolGuidelines = config.schoolGuidelines?.trim() || '';
