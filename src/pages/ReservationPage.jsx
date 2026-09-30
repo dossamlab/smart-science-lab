@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Calendar as CalendarIcon, Clock, Package, User, CheckCircle2, AlertCircle, Loader2, ChevronLeft, ChevronRight, Plus, RotateCcw, Hash, X } from 'lucide-react';
 import { useAppConfig } from '../context/AppConfigContext';
 
@@ -17,8 +18,12 @@ const TIME_SLOTS = [
 export default function ReservationPage() {
   const { config } = useAppConfig();
   const API_URL = config.gasUrl?.trim() || '';
+  // A number label on a laptop (QR 라벨 page) opens ?eq=학생용 노트북&unit=3 with that unit picked.
+  const [params] = useSearchParams();
+  const qrEquipment = params.get('eq') || '';
+  const qrUnit = Number(params.get('unit')) || 0;
   const [selectedDate, setSelectedDate] = useState(new Date());
-  const [selectedEquipment, setSelectedEquipment] = useState('');
+  const [selectedEquipment, setSelectedEquipment] = useState(qrEquipment);
   const [manualEquipment, setManualEquipment] = useState('');
   const [selectedTimes, setSelectedTimes] = useState([]); // 체크박스 다중 선택
   const [applicantName, setApplicantName] = useState('');
@@ -30,7 +35,7 @@ export default function ReservationPage() {
   const [reservations, setReservations] = useState([]);
   const [equipmentList, setEquipmentList] = useState(DEFAULT_EQUIPMENTS);
   const [equipmentUnits, setEquipmentUnits] = useState({}); // { '학생용 노트북': 30 } from the sheet's 수량 column
-  const [selectedUnit, setSelectedUnit] = useState(0);
+  const [selectedUnit, setSelectedUnit] = useState(qrUnit);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const [loading, setLoading] = useState(Boolean(API_URL));
@@ -81,6 +86,12 @@ export default function ReservationPage() {
   }, [API_URL, refreshKey]);
 
   const refresh = () => setRefreshKey(k => k + 1);
+
+  // Once the data is in, a QR scan lands on that unit's booking today (to return it) or on the form (to book it).
+  useEffect(() => {
+    if (loading || !qrEquipment) return;
+    (document.getElementById('qr-booking') || document.getElementById('booking-form'))?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [loading, qrEquipment]);
 
   // Active bookings of `equipment` on `date` that use any of `slots`.
   const bookingsOf = (equipment, date, slots) => reservations.filter(r =>
@@ -213,11 +224,11 @@ export default function ReservationPage() {
       const isToday = new Date().toDateString() === date.toDateString();
       const dateStr = getLocalDateString(date);
       const hasReservation = reservations.some(r => r['날짜'] === dateStr && r['상태'] === '예약완료');
-      const isPast = dateStr < todayStr;
+      const isPast = dateStr < todayStr; // an active booking on a past day was never returned
 
       days.push(
         <button key={d} onClick={() => setSelectedDate(date)}
-          aria-label={`${month + 1}월 ${d}일${hasReservation ? ', 예약 있음' : ''}`}
+          aria-label={`${month + 1}월 ${d}일${hasReservation ? (isPast ? ', 미반납 있음' : ', 예약 있음') : ''}`}
           aria-pressed={isSelected}
           className={`h-14 rounded-2xl flex flex-col items-center justify-center relative transition-all ${
             isSelected ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' :
@@ -226,7 +237,7 @@ export default function ReservationPage() {
           }`}
         >
           <span className="text-sm">{d}</span>
-          {hasReservation && !isSelected && <div className="w-1 h-1 bg-indigo-400 rounded-full mt-1" />}
+          {hasReservation && !isSelected && <div className={`w-1 h-1 rounded-full mt-1 ${isPast ? 'bg-red-500' : 'bg-indigo-400'}`} />}
         </button>
       );
     }
@@ -236,9 +247,22 @@ export default function ReservationPage() {
   const changeMonth = (offset) =>
     setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + offset, 1));
 
+  const showDate = (dateStr) => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    setSelectedDate(new Date(y, m - 1, d));
+    setCurrentMonth(new Date(y, m - 1, 1));
+    document.getElementById('daily-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   const selectedDateStr = getLocalDateString(selectedDate);
   const selectedIsPast = selectedDateStr < todayStr;
-  const dailyReservations = reservations.filter(r => r['날짜'] === selectedDateStr && r['상태'] !== '예약취소');
+  const isQrUnit = (r) => qrUnit > 0 && r['기자재'] === qrEquipment && Number(r['번호']) === qrUnit;
+  const dailyReservations = reservations.filter(r => r['날짜'] === selectedDateStr && r['상태'] !== '예약취소')
+    .sort((a, b) => isQrUnit(b) - isQrUnit(a));
+  const qrBooking = dailyReservations.find(r => isQrUnit(r) && r['상태'] === '예약완료');
+  // Past bookings never returned (still 예약완료), oldest first, so they can be chased up.
+  const overdue = reservations.filter(r => r['날짜'] && r['날짜'] < todayStr && r['상태'] === '예약완료')
+    .sort((a, b) => String(a['날짜']).localeCompare(String(b['날짜'])));
   const activeToday = dailyReservations.filter(r => r['상태'] === '예약완료');
   const gridEquipments = [...new Set([...equipmentList, ...activeToday.map(r => r['기자재'])])];
   const bookingEquipment = selectedEquipment === 'manual' ? manualEquipment : selectedEquipment;
@@ -259,6 +283,24 @@ export default function ReservationPage() {
       <div className="grid lg:grid-cols-3 gap-8">
         {/* Left: Calendar & Daily List */}
         <div className="lg:col-span-2 space-y-8 min-w-0">
+          {overdue.length > 0 && (
+            <div className="bg-red-50 border border-red-200 rounded-[2rem] p-5">
+              <p className="font-black text-red-800 flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 shrink-0" aria-hidden="true" /> 반납되지 않은 지난 예약 {overdue.length}건
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {overdue.slice(0, 6).map((r, i) => (
+                  <button key={r['ID'] || i} type="button" onClick={() => showDate(r['날짜'])}
+                    className="h-10 px-3 rounded-xl bg-white border border-red-200 text-sm font-bold text-red-800 hover:bg-red-100 transition-colors">
+                    {r['날짜'].slice(5).replace('-', '/')} {r['기자재']}{r['번호'] && ` ${r['번호']}번`} · {r['신청자명']}
+                  </button>
+                ))}
+                {overdue.length > 6 && <span className="self-center text-sm font-bold text-red-700">외 {overdue.length - 6}건</span>}
+              </div>
+              <p className="mt-3 text-xs text-red-700">누르면 그날 예약 현황으로 갑니다. 빌린 학생이 학번으로 반납하거나, 스프레드시트에서 상태를 '반납완료'로 바꾸면 사라집니다.</p>
+            </div>
+          )}
+
           {/* Calendar */}
           <div className="bg-white rounded-[2.5rem] shadow-xl border border-gray-100 p-4 sm:p-8">
             <div className="flex items-center justify-between mb-8">
@@ -332,7 +374,7 @@ export default function ReservationPage() {
           </div>
 
           {/* Daily Reservations */}
-          <div className="bg-white rounded-[2.5rem] shadow-xl border border-gray-100 p-8">
+          <div id="daily-list" className="scroll-mt-24 bg-white rounded-[2.5rem] shadow-xl border border-gray-100 p-8">
             <h3 className="text-xl font-black text-gray-900 mb-6 flex items-center gap-2">
               <Clock className="w-6 h-6 text-indigo-600" />
               {selectedDate.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'long' })} 예약 현황
@@ -343,7 +385,8 @@ export default function ReservationPage() {
             ) : dailyReservations.length > 0 ? (
               <div className="grid sm:grid-cols-2 gap-4">
                 {dailyReservations.map((res, i) => (
-                  <div key={i} className={`flex flex-col gap-3 p-5 rounded-3xl border transition-all ${res['상태'] === '반납완료' ? 'bg-gray-50 border-gray-100 opacity-60' : 'bg-white border-indigo-100 shadow-md'}`}>
+                  <div key={i} id={res === qrBooking ? 'qr-booking' : undefined}
+                    className={`scroll-mt-24 flex flex-col gap-3 p-5 rounded-3xl border transition-all ${res['상태'] === '반납완료' ? 'bg-gray-50 border-gray-100 opacity-60' : selectedIsPast ? 'bg-white border-red-200 shadow-md' : 'bg-white border-indigo-100 shadow-md'} ${isQrUnit(res) ? 'ring-2 ring-indigo-500' : ''}`}>
                     <div className="flex items-start gap-4">
                       <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${res['상태'] === '반납완료' ? 'bg-gray-200 text-gray-500' : 'bg-indigo-100 text-indigo-600'}`}>
                         <Package className="w-6 h-6" />
@@ -352,6 +395,9 @@ export default function ReservationPage() {
                         <div className="text-sm font-black text-gray-900 truncate">{res['기자재']}{res['번호'] && ` ${res['번호']}번`}</div>
                         <div className="text-xs font-bold text-gray-500 mt-1">{res['신청자명']}</div>
                         <div className="text-xs text-gray-500 mt-0.5">{res['시간대']}</div>
+                        {selectedIsPast && res['상태'] === '예약완료' && (
+                          <div className="mt-1 inline-block px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-xs font-black">미반납</div>
+                        )}
                         {res['반납일시'] && <div className="text-xs font-bold text-gray-500 mt-1">반납: {res['반납일시']}</div>}
                       </div>
                     </div>

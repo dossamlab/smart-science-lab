@@ -52,3 +52,9 @@ export const CHECKLIST = [
 ];
 
 export const ALL_ITEMS = CHECKLIST.flatMap(group => group.items);
+
+/** 'YYYY-MM' of today, the month an inspection is filed under. */
+export const thisMonth = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+};

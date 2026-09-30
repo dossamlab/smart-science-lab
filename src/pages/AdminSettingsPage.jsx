@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Settings, Save, CheckCircle2, AlertCircle,
   School, FileText, Link2, ArrowLeft, Info, QrCode, ClipboardCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAppConfig } from '../context/AppConfigContext';
 import PinGate from '../components/PinGate';
+import { thisMonth } from '../data/inspectionChecklist';
 
 const TABS = [
   { id: 'school', label: '학교 기본 정보', icon: School },
@@ -193,6 +194,27 @@ function TabLink({ draft, set }) {
   );
 }
 
+// Labs with a record this month (서식1: 매월 4일 이상 월 1회 점검), so a missed month stands out.
+function InspectionStatus({ gasUrl }) {
+  const [labs, setLabs] = useState(null);
+  useEffect(() => {
+    if (!gasUrl) return;
+    let active = true;
+    fetch(`${gasUrl}?type=inspections`)
+      .then(r => r.json())
+      .then(res => {
+        if (!active || res.status !== 'success') return;
+        setLabs([...new Set((res.data?.inspections || []).filter(i => i.month === thisMonth()).map(i => i.lab))]);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [gasUrl]);
+  if (!labs) return null;
+  return labs.length
+    ? <span className="block text-xs font-bold text-emerald-700">이번 달 점검: {labs.join(', ')}</span>
+    : <span className="block text-xs font-bold text-red-600">이번 달 점검 기록 없음 (매월 4일 점검)</span>;
+}
+
 /* ─── 메인 컴포넌트 ─── */
 export default function AdminSettingsPage() {
   const { config, updateConfig } = useAppConfig();
@@ -239,10 +261,11 @@ export default function AdminSettingsPage() {
       {/* 관리 도구 */}
       <div className="grid sm:grid-cols-2 gap-3 mb-8">
         <Link to="/labels" className="flex items-center gap-3 h-16 px-5 rounded-2xl bg-white border border-gray-100 shadow-sm font-black text-gray-800 hover:border-brand-300">
-          <QrCode className="w-6 h-6 text-brand-600" aria-hidden="true" /> 시약병 QR 라벨 인쇄
+          <QrCode className="w-6 h-6 text-brand-600" aria-hidden="true" /> QR 라벨 인쇄 (시약병·기자재 번호)
         </Link>
-        <Link to="/inspection" className="flex items-center gap-3 h-16 px-5 rounded-2xl bg-white border border-gray-100 shadow-sm font-black text-gray-800 hover:border-brand-300">
-          <ClipboardCheck className="w-6 h-6 text-brand-600" aria-hidden="true" /> 월간 안전점검 기록
+        <Link to="/inspection" className="flex items-center gap-3 min-h-16 py-2 px-5 rounded-2xl bg-white border border-gray-100 shadow-sm font-black text-gray-800 hover:border-brand-300">
+          <ClipboardCheck className="w-6 h-6 text-brand-600 shrink-0" aria-hidden="true" />
+          <span>월간 안전점검 기록<InspectionStatus gasUrl={config.gasUrl?.trim()} /></span>
         </Link>
       </div>
 

@@ -7,6 +7,9 @@
  * 개인정보: 조회(GET) 응답에는 이름을 가려서(홍*동) 내보내고 학번·점검자 이름은 내보내지 않는다.
  * 학번은 반납·취소 본인 확인에만 쓴다. 스프레드시트 공유는 '제한됨'으로 둔다(웹 앱은 소유자 권한으로 실행).
  *
+ * 안전점검 기록은 관리자 PIN이 있어야 저장된다. [프로젝트 설정 → 스크립트 속성]에
+ * ADMIN_PIN(Netlify의 ADMIN_PIN과 같은 값)을 넣어 둔다. 없으면 점검 기록 저장을 거부한다.
+ *
  * 시트는 이름이 아니라 1행 헤더로 찾는다.
  *   예약 시트: 1행에 '신청자명'이 있는 시트 (없던 '학번'·'반납일시'·'번호' 열은 자동으로 추가)
  *   기자재 시트: 1행 A열이 '기자재'로 시작하는 다른 시트의 A열 목록 (없으면 앱 기본 목록 사용)
@@ -14,7 +17,8 @@
  *   보유 시약 시트: 1행에 'CAS번호'가 있는 시트. 쓰는 열: 이름, CAS번호, 화학식, 분류, 보관위치 (없는 열은 비워 둠)
  *   안전점검 시트: '안전점검기록' (없으면 첫 기록 때 자동으로 만든다)
  *
- * 오래된 예약 기록 정리: 편집기에서 cleanupReservations 를 선택해 [실행] (KEEP_DAYS보다 오래된 예약 행 삭제)
+ * 오래된 예약 기록 정리: 하루 한 번, 첫 예약·반납·취소 요청 때 KEEP_DAYS보다 오래된 예약 행을 자동으로 지운다.
+ *   바로 지우려면 편집기에서 cleanupReservations 를 선택해 [실행]
  */
 
 // 스프레드시트의 [확장 프로그램 → Apps Script]에서 연 스크립트(원래 v2.1 방식)면 비워 둔다.
@@ -34,6 +38,7 @@ function doGet(e) {
   var type = e && e.parameter && e.parameter.type;
   if (type === 'chemicals') return json_({ status: 'success', data: { chemicals: readChemicals_() } });
   if (type === 'inspections') return json_({ status: 'success', data: { inspections: readInspections_() } });
+  if (type === 'equipments') return json_({ status: 'success', data: readEquipments_() });
 
   var sheet = findReservationSheet_();
   var reservations = readRows_(sheet).map(function (r) {
@@ -61,9 +66,20 @@ function doPost(e) {
     return json_({ status: 'error', message: '요청 형식이 올바르지 않습니다.' });
   }
 
+  // Checked before the lock, so a wrong-PIN delay never holds up bookings.
+  if (body.action === 'inspection') {
+    var denied = checkPin_(body.pin);
+    if (denied) return json_(denied);
+  }
+
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
+    try {
+      cleanupDaily_();
+    } catch (err) {
+      Logger.log('예약 정리 실패: ' + err); // housekeeping never blocks a booking
+    }
     if (body.action === 'book') return json_(book_(body));
     if (body.action === 'return') return json_(returnItem_(body));
     if (body.action === 'cancel') return json_(cancel_(body));
@@ -163,7 +179,15 @@ function findOwnedReservation_(body) {
   return { error: { status: 'error', message: '예약을 찾을 수 없습니다.' } };
 }
 
-/** Deletes reservation rows older than KEEP_DAYS. Run by hand from the editor (e.g. at the end of a term). */
+/** Runs cleanupReservations at most once a day, from inside doPost (under the lock, so row numbers stay put). */
+function cleanupDaily_() {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('LAST_CLEANUP') === today_()) return;
+  cleanupReservations();
+  props.setProperty('LAST_CLEANUP', today_());
+}
+
+/** Deletes reservation rows older than KEEP_DAYS. Runs daily via cleanupDaily_; can also be run by hand from the editor. */
 function cleanupReservations() {
   var sheet = findReservationSheet_();
   var headers = headers_(sheet);
@@ -206,6 +230,19 @@ function readChemicals_() {
 }
 
 /* ---------- 월간 안전점검 (경기도교육청 서식1) ---------- */
+
+/** Inspection records are official records: saving one needs the admin PIN (script property ADMIN_PIN). */
+function checkPin_(pin) {
+  var expected = PropertiesService.getScriptProperties().getProperty('ADMIN_PIN');
+  if (!expected) {
+    return { status: 'error', message: "Apps Script [프로젝트 설정 → 스크립트 속성]에 ADMIN_PIN을 추가해야 점검 기록을 저장할 수 있습니다." };
+  }
+  if (String(pin || '') !== expected) {
+    Utilities.sleep(1000); // slow down guessing
+    return { status: 'error', message: '관리자 PIN이 맞지 않습니다.' };
+  }
+  return null;
+}
 
 function inspection_(body) {
   var month = String(body.month || '').trim();

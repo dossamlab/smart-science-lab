@@ -34,11 +34,14 @@ function load() {
   const res = makeSheet('예약내역', [
     ['ID', '신청자명', '날짜', '시간대', '기자재', '상태', '신청일시'],
     ['old1', '홍길동 (10101)', kstDate(2099, 10, 5), '1교시 (09:00~09:50)', '광학 현미경', '예약완료', kstDate(2099, 10, 1)],
-    ['past1', '김철수 (20202)', kstDate(2020, 3, 2), '2교시 (10:00~10:50)', '광학 현미경', '예약완료', kstDate(2020, 3, 1)],
+    ['past1', '김철수 (20202)', new RealmDate(Date.now() - 30 * 86400e3), '2교시 (10:00~10:50)', '광학 현미경', '예약완료', new RealmDate(Date.now() - 31 * 86400e3)],
+    ['ancient', '이영희 (30303)', kstDate(2020, 3, 2), '3교시 (11:00~11:50)', '광학 현미경', '반납완료', kstDate(2020, 3, 1)],
   ]);
   const eq = makeSheet('기자재목록', [['기자재명', '수량'], ['광학 현미경'], ['전자 저울', 1], ['학생용 노트북', '3']]);
   const chem = makeSheet('시트1', [['이름', 'CAS번호', '화학식', '섹션1'], ['나트륨', '7440-23-5', 'Na', ''], ['물', '7732-18-5', 'H2O', ''], ['잘못', 'abc', '', '']]);
   const sheets = [chem, res, eq];
+  const props = new Map([['ADMIN_PIN', '0000']]);
+  const slept = [];
   const ss = {
     getSheets: () => sheets,
     getSheetByName: (n) => sheets.find(s => s.name === n) || null,
@@ -49,6 +52,7 @@ function load() {
     SpreadsheetApp: { getActiveSpreadsheet: () => ss, openById: () => { throw new Error('openById should not be used'); } },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     Logger: { log() {} },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (k) => props.get(k) ?? null, setProperty: (k, v) => props.set(k, v) }) },
     Utilities: {
       formatDate: (d, tz, f) => {
         const s = kstString(d.getTime());
@@ -56,13 +60,14 @@ function load() {
         const k = new Date(d.getTime() + 9 * 3600e3);
         return `${s} ${pad(k.getUTCHours())}:${pad(k.getUTCMinutes())}`;
       },
+      sleep: (ms) => slept.push(ms),
     },
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: (t) => ({ setMimeType: () => JSON.parse(t) }) },
   };
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
   const post = (body) => ctx.doPost({ postData: { contents: JSON.stringify(body) } });
-  return { ctx, post, res, sheets, today };
+  return { ctx, post, res, sheets, today, props, slept };
 }
 
 test('GET masks names, hides student IDs, sends KST dates and adds the 학번 column', () => {
@@ -73,6 +78,7 @@ test('GET masks names, hides student IDs, sends KST dates and adds the 학번 co
   assert.ok(!JSON.stringify(g).includes('10101'));
   assert.deepEqual(g.data.equipments, ['광학 현미경', '전자 저울', '학생용 노트북']);
   assert.deepEqual({ ...g.data.equipmentUnits }, { '학생용 노트북': 3 });
+  assert.deepEqual(ctx.doGet({ parameter: { type: 'equipments' } }).data, { names: g.data.equipments, units: { '학생용 노트북': 3 } });
   assert.ok(['학번', '반납일시', '번호'].every(h => res.rows[0].includes(h)));
 });
 
@@ -133,9 +139,9 @@ test('return and cancel need the booker\'s 학번; past bookings cannot be cance
 });
 
 test('inspection creates its sheet, stores each item under 항목N and counts 미흡', () => {
-  const { ctx, post, sheets } = load();
+  const { ctx, post, sheets, props, slept } = load();
   const r = post({
-    action: 'inspection', month: '2026-10', lab: '화학실', inspector: '교사', note: '소화기 교체 예정',
+    action: 'inspection', pin: '0000', month: '2026-10', lab: '화학실', inspector: '교사', note: '소화기 교체 예정',
     results: [{ no: '1', result: '○' }, { no: '24-1', result: '×' }, { no: '11', result: '×' }, { no: 'x', result: '○' }, { no: '2', result: '?' }],
   });
   assert.equal(r.status, 'success');
@@ -147,13 +153,33 @@ test('inspection creates its sheet, stores each item under 항목N and counts �
   const list = ctx.doGet({ parameter: { type: 'inspections' } }).data.inspections;
   assert.deepEqual(list.map(i => [i.month, i.lab, i.weak]), [['2026-10', '화학실', 2]]);
   assert.ok(!JSON.stringify(list).includes('교사'));
-  assert.equal(post({ action: 'inspection', month: '2026/10', lab: '화학실', results: [{ no: '1', result: '○' }] }).status, 'error');
+  assert.equal(post({ action: 'inspection', pin: '0000', month: '2026/10', lab: '화학실', results: [{ no: '1', result: '○' }] }).status, 'error');
+
+  // Without the admin PIN (script property ADMIN_PIN) nothing is written.
+  const rows = sheet.rows.length;
+  const again = { action: 'inspection', month: '2026-11', lab: '화학실', results: [{ no: '1', result: '○' }] };
+  assert.match(post({ ...again, pin: '1234' }).message, /PIN이 맞지 않습니다/);
+  assert.match(post(again).message, /PIN이 맞지 않습니다/);
+  assert.deepEqual(slept, [1000, 1000]);
+  props.delete('ADMIN_PIN');
+  assert.match(post({ ...again, pin: '0000' }).message, /스크립트 속성/);
+  assert.equal(sheet.rows.length, rows);
 });
 
 test('cleanupReservations deletes only rows older than KEEP_DAYS', () => {
   const { ctx, res } = load();
   assert.equal(ctx.cleanupReservations(), 1);
-  assert.deepEqual(res.rows.slice(1).map(r => r[0]), ['old1']);
+  assert.deepEqual(res.rows.slice(1).map(r => r[0]), ['old1', 'past1']);
+});
+
+test('the first POST of a day deletes old reservations; later ones that day skip it', () => {
+  const { post, res, props, today } = load();
+  post({ action: 'nope' });
+  assert.deepEqual(res.rows.slice(1).map(r => r[0]), ['old1', 'past1']);
+  assert.equal(props.get('LAST_CLEANUP'), today);
+  res.rows.push(['ancient2', '박민수 (40404)', kstDate(2020, 4, 1), '1교시 (09:00~09:50)', '광학 현미경', '반납완료', kstDate(2020, 4, 1)]);
+  post({ action: 'nope' });
+  assert.equal(res.rows.at(-1)[0], 'ancient2');
 });
 
 test('bad JSON and unknown actions are refused', () => {

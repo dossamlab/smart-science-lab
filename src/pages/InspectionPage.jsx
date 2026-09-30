@@ -1,16 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, ClipboardCheck, Loader2, CheckCircle2, AlertCircle, Printer } from 'lucide-react';
-import PinGate from '../components/PinGate';
 import { useAppConfig } from '../context/AppConfigContext';
-import { CHECKLIST, ALL_ITEMS, RATINGS } from '../data/inspectionChecklist';
+import { CHECKLIST, ALL_ITEMS, RATINGS, thisMonth } from '../data/inspectionChecklist';
 
 const LABS = ['물리/지학실', '화학실', '생명과학실', '물리/지학 준비실', '화학 준비실'];
-
-const thisMonth = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-};
 
 const RATING_STYLE = {
   '○': 'bg-emerald-600 text-white border-emerald-600',
@@ -18,7 +12,8 @@ const RATING_STYLE = {
   '×': 'bg-red-600 text-white border-red-600',
 };
 
-function InspectionForm() {
+// Anyone may open and print this page; saving a record needs the admin PIN, which Code.gs checks.
+export default function InspectionPage() {
   const { config } = useAppConfig();
   const gasUrl = config.gasUrl?.trim();
   const [month, setMonth] = useState(thisMonth);
@@ -26,6 +21,7 @@ function InspectionForm() {
   const [inspector, setInspector] = useState('');
   const [results, setResults] = useState({}); // no -> '○' | '△' | '×'
   const [note, setNote] = useState('');
+  const [pin, setPin] = useState('');
   const [status, setStatus] = useState({ type: '', text: '' });
   const [saving, setSaving] = useState(false);
   const [history, setHistory] = useState([]);
@@ -54,6 +50,10 @@ function InspectionForm() {
       setStatus({ type: 'error', text: '점검 결과를 하나 이상 입력하세요.' });
       return;
     }
+    if (!pin) {
+      setStatus({ type: 'error', text: '관리자 PIN을 입력하세요.' });
+      return;
+    }
     setSaving(true);
     setStatus({ type: '', text: '' });
     try {
@@ -61,7 +61,7 @@ function InspectionForm() {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify({
-          action: 'inspection', month, lab, inspector, note,
+          action: 'inspection', pin, month, lab, inspector, note,
           results: ALL_ITEMS.filter(item => results[item.no]).map(item => ({ no: item.no, result: results[item.no] })),
         }),
       });
@@ -161,6 +161,9 @@ function InspectionForm() {
         <button onClick={() => window.print()} className="h-12 px-5 rounded-xl bg-white border border-gray-200 font-black flex items-center gap-2">
           <Printer className="w-5 h-5" aria-hidden="true" /> 게시용 인쇄
         </button>
+        <input type="password" inputMode="numeric" autoComplete="off" aria-label="관리자 PIN" placeholder="관리자 PIN"
+          value={pin} onChange={e => setPin(e.target.value)}
+          className="h-12 w-36 px-3 rounded-xl bg-white border border-gray-200 font-bold text-base text-center" />
         <button onClick={save} disabled={saving} className="h-12 px-6 rounded-xl bg-brand-600 text-white font-black flex items-center gap-2 disabled:opacity-50">
           {saving ? <Loader2 className="w-5 h-5 animate-spin" aria-label="저장 중" /> : <ClipboardCheck className="w-5 h-5" aria-hidden="true" />} 점검 결과 저장
         </button>
@@ -181,8 +184,4 @@ function InspectionForm() {
       )}
     </div>
   );
-}
-
-export default function InspectionPage() {
-  return <PinGate><InspectionForm /></PinGate>;
 }
