@@ -64,10 +64,11 @@ export default function SosButton() {
     <>
       <button
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-24 md:bottom-6 right-4 md:right-6 z-50bg-red-600 text-white w-16 h-16 rounded-full flex flex-col items-center justify-center shadow-2xl hover:bg-red-700 hover:scale-110 active:scale-95 transition-all duration-300 animate-bounce group"
+        aria-label="긴급 비상 연락망 열기"
+        className="fixed bottom-24 md:bottom-6 right-4 md:right-6 z-50 print:hidden bg-red-600 text-white w-16 h-16 rounded-full flex flex-col items-center justify-center shadow-2xl hover:bg-red-700 hover:scale-110 active:scale-95 transition-all duration-300 motion-safe:animate-bounce group"
       >
-        <AlertTriangle className="w-8 h-8 mb-0.5 group-hover:animate-pulse" />
-        <span className="text-[10px] font-black">SOS</span>
+        <AlertTriangle className="w-8 h-8 mb-0.5 group-hover:animate-pulse" aria-hidden="true" />
+        <span className="text-xs font-black">SOS</span>
       </button>
 
       {isOpen && (
@@ -83,7 +84,7 @@ export default function SosButton() {
                   )}
                 </div>
               </div>
-              <button onClick={() => setIsOpen(false)} className="text-red-100 hover:text-white transition-colors">
+              <button onClick={() => setIsOpen(false)} aria-label="닫기" className="text-red-100 hover:text-white transition-colors">
                 <X className="w-8 h-8" />
               </button>
             </div>
@@ -126,7 +127,7 @@ export default function SosButton() {
                   </h3>
                   <div className="space-y-3">
                     {sosData[activeTab].contacts.length === 0 ? (
-                      <div className="p-4 bg-gray-50 rounded-xl text-sm text-gray-400 font-bold text-center">
+                      <div className="p-4 bg-gray-50 rounded-xl text-sm text-gray-500 font-bold text-center">
                         관리자 설정에서 학교 연락처를 입력해 주세요.
                       </div>
                     ) : (

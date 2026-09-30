@@ -1,10 +1,10 @@
 import { createContext, useContext, useState } from 'react';
 
 // School defaults baked in at build time (Netlify env vars) so every device works without setup.
-// Personal phone numbers and the Gemini key stay out of the bundle: they are entered per device.
+// Personal phone numbers stay out of the bundle: they are entered per device (behind the admin PIN).
 const env = import.meta.env;
 
-export const DEFAULT_CONFIG = {
+const DEFAULT_CONFIG = {
   schoolName: env.VITE_SCHOOL_NAME || '',
   schoolPhone: env.VITE_SCHOOL_PHONE || '',
   adminPhone: env.VITE_ADMIN_PHONE || '',
@@ -14,7 +14,6 @@ export const DEFAULT_CONFIG = {
   safetyCoordinatorPhone: '',
   nearbyHospitalName: env.VITE_HOSPITAL_NAME || '',
   nearbyHospitalPhone: env.VITE_HOSPITAL_PHONE || '',
-  geminiApiKey: '',
   schoolGuidelines: '',
   gasUrl: env.VITE_RESERVATION_API_URL || '',
   isConfigured: Boolean(env.VITE_SCHOOL_NAME),
@@ -22,11 +21,20 @@ export const DEFAULT_CONFIG = {
 
 const STORAGE_KEY = 'lab_on_config_v2';
 
-export function loadConfig() {
+function loadConfig() {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) return { ...DEFAULT_CONFIG, ...JSON.parse(stored) };
-  } catch (e) {}
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+    if (stored) {
+      // AI now runs on the server; drop any Gemini key an older version saved on this device.
+      if ('geminiApiKey' in stored) {
+        delete stored.geminiApiKey;
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(stored));
+      }
+      return { ...DEFAULT_CONFIG, ...stored };
+    }
+  } catch {
+    // Corrupt or blocked storage: fall back to the school defaults.
+  }
   return DEFAULT_CONFIG;
 }
 
@@ -55,6 +63,7 @@ export function AppConfigProvider({ children }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components -- hook lives beside its provider
 export function useAppConfig() {
   const ctx = useContext(AppConfigContext);
   if (!ctx) throw new Error('useAppConfig must be used within AppConfigProvider');

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Calendar as CalendarIcon, Clock, Package, User, CheckCircle2, AlertCircle, Loader2, ChevronLeft, ChevronRight, Plus, RotateCcw, Hash } from 'lucide-react';
+import { Calendar as CalendarIcon, Clock, Package, User, CheckCircle2, AlertCircle, Loader2, ChevronLeft, ChevronRight, Plus, RotateCcw, Hash, X } from 'lucide-react';
 import { useAppConfig } from '../context/AppConfigContext';
 
 const DEFAULT_EQUIPMENTS = [
@@ -23,14 +23,15 @@ export default function ReservationPage() {
   const [selectedTimes, setSelectedTimes] = useState([]); // 체크박스 다중 선택
   const [applicantName, setApplicantName] = useState('');
   const [applicantId, setApplicantId] = useState('');
-  const [returningId, setReturningId] = useState(null); // 반납 확인 중인 ID
+  const [pending, setPending] = useState(null); // { id, kind: 'return' | 'cancel' } awaiting 학번 confirmation
   const [returnStudentId, setReturnStudentId] = useState('');
   const [returnError, setReturnError] = useState('');
 
   const [reservations, setReservations] = useState([]);
   const [equipmentList, setEquipmentList] = useState(DEFAULT_EQUIPMENTS);
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(Boolean(API_URL));
   const [submitting, setSubmitting] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState(null);
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -54,34 +55,29 @@ export default function ReservationPage() {
     return res.json().catch(() => ({ status: 'success' }));
   };
 
-  const normalizeDate = (value) =>
-    typeof value === 'string' && value.includes('T') ? getLocalDateString(new Date(value)) : value;
+  const todayStr = getLocalDateString(new Date());
 
-  const fetchReservations = async () => {
+  useEffect(() => {
     if (!API_URL) return;
-    setLoading(true);
-    try {
-      const response = await fetch(API_URL);
-      const result = await response.json();
-      
-      if (result.status === 'success' && result.data) {
+    let active = true;
+    fetch(API_URL)
+      .then(response => response.json())
+      .then(result => {
+        if (!active || result.status !== 'success' || !result.data) return;
         // 객체 형태(reservations)나 배열 형태 모두 대응
         const resData = result.data.reservations || (Array.isArray(result.data) ? result.data : []);
-        // Sheets date cells arrive as UTC ISO (KST midnight = previous day 15:00Z); compare in local date.
+        // Old script versions sent Sheets dates as UTC ISO (KST midnight = previous day 15:00Z).
+        const normalizeDate = (value) =>
+          typeof value === 'string' && value.includes('T') ? getLocalDateString(new Date(value)) : value;
         setReservations(resData.map(r => ({ ...r, '날짜': normalizeDate(r['날짜']) })));
-        
-        if (result.data.equipments?.length > 0) {
-          setEquipmentList(result.data.equipments);
-        }
-      }
-    } catch (error) {
-      console.error('Fetch error:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+        if (result.data.equipments?.length > 0) setEquipmentList(result.data.equipments);
+      })
+      .catch(error => console.error('Fetch error:', error))
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [API_URL, refreshKey]);
 
-  useEffect(() => { fetchReservations(); }, []);
+  const refresh = () => setRefreshKey(k => k + 1);
 
   const toggleTime = (slot) => {
     setSelectedTimes(prev =>
@@ -99,6 +95,10 @@ export default function ReservationPage() {
     }
 
     const dateStr = getLocalDateString(selectedDate);
+    if (dateStr < todayStr) {
+      setMessage({ type: 'error', text: '지난 날짜는 예약할 수 없습니다. 달력에서 오늘 이후 날짜를 고르세요.' });
+      return;
+    }
     const taken = selectedTimes.filter(slot => reservations.some(r =>
       r['날짜'] === dateStr && r['기자재'] === finalEquipment && r['상태'] === '예약완료' &&
       String(r['시간대']).split(', ').includes(slot)
@@ -130,7 +130,7 @@ export default function ReservationPage() {
       setSelectedEquipment('');
       setManualEquipment('');
       setSelectedTimes([]);
-      fetchReservations();
+      refresh();
     } catch {
       setMessage({ type: 'error', text: '연결 오류가 발생했습니다. 인터넷 연결을 확인해 주세요.' });
     } finally {
@@ -138,27 +138,47 @@ export default function ReservationPage() {
     }
   };
 
-  const handleReturn = async (id) => {
+  // Return or cancel; both need the booker's 학번 (checked by Code.gs).
+  const handleAction = async () => {
     if (!returnStudentId.trim()) {
       setReturnError('예약할 때 입력한 학번을 입력하세요.');
       return;
     }
+    const { id, kind } = pending;
     setActionLoadingId(id);
     setReturnError('');
     try {
-      const result = await post({ action: 'return', id, studentId: returnStudentId.trim() });
+      const result = await post({ action: kind, id, studentId: returnStudentId.trim() });
       if (result.status !== 'success') {
-        setReturnError(result.message || '반납하지 못했습니다.');
+        setReturnError(result.message || (kind === 'cancel' ? '취소하지 못했습니다.' : '반납하지 못했습니다.'));
         return;
       }
-      setReturningId(null);
+      setPending(null);
       setReturnStudentId('');
-      fetchReservations();
+      refresh();
     } catch {
       setReturnError('연결 오류가 발생했습니다.');
     } finally {
       setActionLoadingId(null);
     }
+  };
+
+  const openAction = (id, kind) => {
+    setPending({ id, kind });
+    setReturnStudentId('');
+    setReturnError('');
+  };
+
+  // Tap a free cell in the day grid to fill the booking form.
+  const pickSlot = (equipment, slot) => {
+    if (equipmentList.includes(equipment)) {
+      setSelectedEquipment(equipment);
+    } else {
+      setSelectedEquipment('manual');
+      setManualEquipment(equipment);
+    }
+    setSelectedTimes(prev => (prev.includes(slot) ? prev : [...prev, slot]));
+    document.getElementById('booking-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
   const daysInMonth = (y, m) => new Date(y, m + 1, 0).getDate();
@@ -179,12 +199,16 @@ export default function ReservationPage() {
       const isToday = new Date().toDateString() === date.toDateString();
       const dateStr = getLocalDateString(date);
       const hasReservation = reservations.some(r => r['날짜'] === dateStr && r['상태'] === '예약완료');
+      const isPast = dateStr < todayStr;
 
       days.push(
         <button key={d} onClick={() => setSelectedDate(date)}
+          aria-label={`${month + 1}월 ${d}일${hasReservation ? ', 예약 있음' : ''}`}
+          aria-pressed={isSelected}
           className={`h-14 rounded-2xl flex flex-col items-center justify-center relative transition-all ${
             isSelected ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200' :
-            isToday ? 'bg-indigo-50 text-indigo-700 font-bold' : 'hover:bg-gray-50 text-gray-700'
+            isToday ? 'bg-indigo-50 text-indigo-700 font-bold' :
+            isPast ? 'text-gray-500 hover:bg-gray-50' : 'hover:bg-gray-50 text-gray-700'
           }`}
         >
           <span className="text-sm">{d}</span>
@@ -199,7 +223,12 @@ export default function ReservationPage() {
     setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + offset, 1));
 
   const selectedDateStr = getLocalDateString(selectedDate);
+  const selectedIsPast = selectedDateStr < todayStr;
   const dailyReservations = reservations.filter(r => r['날짜'] === selectedDateStr && r['상태'] !== '예약취소');
+  const activeToday = dailyReservations.filter(r => r['상태'] === '예약완료');
+  const gridEquipments = [...new Set([...equipmentList, ...activeToday.map(r => r['기자재'])])];
+  const bookedBy = (equipment, slot) => activeToday.find(r =>
+    r['기자재'] === equipment && String(r['시간대']).split(', ').includes(slot));
 
   return (
     <div className="max-w-6xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20 px-4">
@@ -214,20 +243,73 @@ export default function ReservationPage() {
 
       <div className="grid lg:grid-cols-3 gap-8">
         {/* Left: Calendar & Daily List */}
-        <div className="lg:col-span-2 space-y-8">
+        <div className="lg:col-span-2 space-y-8 min-w-0">
           {/* Calendar */}
           <div className="bg-white rounded-[2.5rem] shadow-xl border border-gray-100 p-4 sm:p-8">
             <div className="flex items-center justify-between mb-8">
               <h2 className="text-2xl font-black text-gray-900">{currentMonth.getFullYear()}년 {currentMonth.getMonth() + 1}월</h2>
               <div className="flex gap-2">
-                <button onClick={() => changeMonth(-1)} className="p-3 rounded-2xl hover:bg-gray-100 text-gray-400 transition-colors"><ChevronLeft className="w-6 h-6" /></button>
-                <button onClick={() => changeMonth(1)} className="p-3 rounded-2xl hover:bg-gray-100 text-gray-400 transition-colors"><ChevronRight className="w-6 h-6" /></button>
+                <button onClick={() => changeMonth(-1)} aria-label="이전 달" className="p-3 rounded-2xl hover:bg-gray-100 text-gray-500 transition-colors"><ChevronLeft className="w-6 h-6" /></button>
+                <button onClick={() => changeMonth(1)} aria-label="다음 달" className="p-3 rounded-2xl hover:bg-gray-100 text-gray-500 transition-colors"><ChevronRight className="w-6 h-6" /></button>
               </div>
             </div>
-            <div className="grid grid-cols-7 gap-2 mb-4 text-center font-bold text-gray-400 text-xs uppercase tracking-widest">
+            <div className="grid grid-cols-7 gap-2 mb-4 text-center font-bold text-gray-500 text-xs uppercase tracking-widest">
               {['일', '월', '화', '수', '목', '금', '토'].map(d => <div key={d}>{d}</div>)}
             </div>
             <div className="grid grid-cols-7 gap-2">{renderCalendar()}</div>
+          </div>
+
+          {/* Day grid: equipment x period, so a tablet shows the whole day at a glance */}
+          <div className="bg-white rounded-[2.5rem] shadow-xl border border-gray-100 p-4 sm:p-8">
+            <h3 className="text-xl font-black text-gray-900 mb-1">
+              {selectedDate.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })} 시간표
+            </h3>
+            <p className="text-sm text-gray-500 mb-4">
+              {selectedIsPast ? '지난 날짜는 조회만 할 수 있습니다.' : '빈칸(+)을 누르면 예약 신청서에 기자재와 교시가 채워집니다.'}
+            </p>
+            <div className="overflow-x-auto -mx-2 px-2">
+              <table className="w-full min-w-[720px] border-separate border-spacing-1 text-sm">
+                <thead>
+                  <tr>
+                    <th className="text-left text-xs font-black text-gray-500 px-2">기자재</th>
+                    {TIME_SLOTS.map(slot => (
+                      <th key={slot} className="text-xs font-black text-gray-500 whitespace-nowrap">{slot.split(' ')[0]}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {gridEquipments.map(eq => (
+                    <tr key={eq}>
+                      <th scope="row" className="text-left font-bold text-gray-800 px-2 whitespace-nowrap max-w-[10rem] truncate">{eq}</th>
+                      {TIME_SLOTS.map(slot => {
+                        const booking = bookedBy(eq, slot);
+                        if (booking) {
+                          return (
+                            <td key={slot} className="h-11 rounded-lg bg-indigo-100 text-indigo-800 text-xs font-bold text-center px-1">
+                              {booking['신청자명']}
+                            </td>
+                          );
+                        }
+                        const chosen = !selectedIsPast && (selectedEquipment === eq || (selectedEquipment === 'manual' && manualEquipment === eq)) && selectedTimes.includes(slot);
+                        return (
+                          <td key={slot} className="h-11 p-0">
+                            <button
+                              type="button"
+                              disabled={selectedIsPast}
+                              onClick={() => pickSlot(eq, slot)}
+                              aria-label={`${eq} ${slot} 예약하기`}
+                              className={`w-full h-11 rounded-lg font-black transition-colors ${chosen ? 'bg-indigo-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-indigo-50 hover:text-indigo-600'} disabled:cursor-not-allowed disabled:hover:bg-gray-50 disabled:hover:text-gray-400`}
+                            >
+                              {chosen ? '✓' : selectedIsPast ? '' : '+'}
+                            </button>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           {/* Daily Reservations */}
@@ -238,7 +320,7 @@ export default function ReservationPage() {
             </h3>
 
             {loading ? (
-              <div className="py-10 text-center text-gray-400"><Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />불러오는 중...</div>
+              <div className="py-10 text-center text-gray-500"><Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />불러오는 중...</div>
             ) : dailyReservations.length > 0 ? (
               <div className="grid sm:grid-cols-2 gap-4">
                 {dailyReservations.map((res, i) => (
@@ -250,42 +332,54 @@ export default function ReservationPage() {
                       <div className="min-w-0 flex-grow">
                         <div className="text-sm font-black text-gray-900 truncate">{res['기자재']}</div>
                         <div className="text-xs font-bold text-gray-500 mt-1">{res['신청자명']}</div>
-                        <div className="text-xs text-gray-400 mt-0.5">{res['시간대']}</div>
-                        {res['반납일시'] && <div className="text-[10px] font-bold text-gray-400 mt-1">반납: {res['반납일시']}</div>}
+                        <div className="text-xs text-gray-500 mt-0.5">{res['시간대']}</div>
+                        {res['반납일시'] && <div className="text-xs font-bold text-gray-500 mt-1">반납: {res['반납일시']}</div>}
                       </div>
                     </div>
 
-                    {/* 반납 확인 UI */}
+                    {/* 반납·취소 확인 UI */}
                     {res['상태'] === '예약완료' && (
-                      returningId === res['ID'] ? (
+                      pending?.id === res['ID'] ? (
                         <div className="mt-1 space-y-2">
+                          <p className="text-sm font-black text-gray-700">{pending.kind === 'cancel' ? '예약 취소' : '반납'} — 예약한 사람의 학번</p>
                           <input
-                            type="text" inputMode="numeric" autoComplete="off"
+                            type="text" inputMode="numeric" autoComplete="off" autoFocus
+                            aria-label="예약한 사람의 학번"
                             value={returnStudentId} onChange={e => setReturnStudentId(e.target.value)}
-                            placeholder="예약한 사람의 학번"
+                            placeholder="학번"
                             className="w-full h-11 px-3 rounded-xl bg-gray-50 border-2 border-transparent focus:border-indigo-300 focus:outline-none text-base font-bold"
                           />
                           {returnError && <p className="text-xs font-bold text-red-600">{returnError}</p>}
                           <div className="flex gap-2">
                             <button
-                              onClick={() => handleReturn(res['ID'])}
+                              onClick={handleAction}
                               disabled={actionLoadingId === res['ID']}
                               className="flex-1 h-11 bg-red-500 text-white text-sm font-black rounded-xl hover:bg-red-600 transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
                             >
-                              {actionLoadingId === res['ID'] ? <Loader2 className="w-4 h-4 animate-spin" /> : '반납 확인'}
+                              {actionLoadingId === res['ID'] ? <Loader2 className="w-4 h-4 animate-spin" /> : pending.kind === 'cancel' ? '취소 확인' : '반납 확인'}
                             </button>
-                            <button onClick={() => { setReturningId(null); setReturnError(''); }} className="flex-1 h-11 bg-gray-100 text-gray-600 text-sm font-black rounded-xl hover:bg-gray-200 transition-colors">
-                              취소
+                            <button onClick={() => { setPending(null); setReturnError(''); }} className="flex-1 h-11 bg-gray-100 text-gray-600 text-sm font-black rounded-xl hover:bg-gray-200 transition-colors">
+                              닫기
                             </button>
                           </div>
                         </div>
                       ) : (
-                        <button
-                          onClick={() => { setReturningId(res['ID']); setReturnStudentId(''); setReturnError(''); }}
-                          className="w-full h-11 flex items-center justify-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-sm font-black rounded-xl transition-colors"
-                        >
-                          <RotateCcw className="w-4 h-4" /> 반납하기
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => openAction(res['ID'], 'return')}
+                            className="flex-1 h-11 flex items-center justify-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-sm font-black rounded-xl transition-colors"
+                          >
+                            <RotateCcw className="w-4 h-4" /> 반납하기
+                          </button>
+                          {!selectedIsPast && (
+                            <button
+                              onClick={() => openAction(res['ID'], 'cancel')}
+                              className="flex-1 h-11 flex items-center justify-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-black rounded-xl transition-colors"
+                            >
+                              <X className="w-4 h-4" /> 예약 취소
+                            </button>
+                          )}
+                        </div>
                       )
                     )}
                   </div>
@@ -293,7 +387,7 @@ export default function ReservationPage() {
               </div>
             ) : (
               <div className="py-10 text-center bg-gray-50 rounded-3xl border border-dashed border-gray-200">
-                <p className="text-gray-400 font-bold">확정된 예약이 없습니다.</p>
+                <p className="text-gray-500 font-bold">확정된 예약이 없습니다.</p>
               </div>
             )}
           </div>
@@ -301,7 +395,7 @@ export default function ReservationPage() {
 
         {/* Right: Booking Form */}
         <div>
-          <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100/50 border border-indigo-50 p-6 sm:p-8 lg:sticky lg:top-24">
+          <div id="booking-form" className="scroll-mt-24 bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100/50 border border-indigo-50 p-6 sm:p-8 lg:sticky lg:top-24">
             <h3 className="text-2xl font-black text-gray-900 mb-6 flex items-center gap-2">
               <Plus className="w-7 h-7 text-indigo-600" />
               신규 예약 신청
@@ -310,7 +404,7 @@ export default function ReservationPage() {
             <form onSubmit={handleReservation} className="space-y-5">
               {/* 신청자 이름 */}
               <div>
-                <label className="block text-xs font-black text-gray-400 uppercase tracking-wider mb-2">신청자 이름</label>
+                <label className="block text-xs font-black text-gray-500 uppercase tracking-wider mb-2">신청자 이름</label>
                 <div className="relative">
                   <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-300" />
                   <input type="text" value={applicantName} onChange={e => setApplicantName(e.target.value)}
@@ -321,7 +415,7 @@ export default function ReservationPage() {
 
               {/* 학번 */}
               <div>
-                <label className="block text-xs font-black text-gray-400 uppercase tracking-wider mb-2">신청자 학번</label>
+                <label className="block text-xs font-black text-gray-500 uppercase tracking-wider mb-2">신청자 학번</label>
                 <div className="relative">
                   <Hash className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-300" />
                   <input type="text" inputMode="numeric" value={applicantId} onChange={e => setApplicantId(e.target.value)}
@@ -332,7 +426,7 @@ export default function ReservationPage() {
 
               {/* 기자재 선택 */}
               <div>
-                <label className="block text-xs font-black text-gray-400 uppercase tracking-wider mb-2">기자재 선택</label>
+                <label className="block text-xs font-black text-gray-500 uppercase tracking-wider mb-2">기자재 선택</label>
                 <div className="relative mb-3">
                   <Package className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-300" />
                   <select value={selectedEquipment} onChange={e => setSelectedEquipment(e.target.value)}
@@ -351,7 +445,7 @@ export default function ReservationPage() {
 
               {/* 사용 시간대 체크박스 */}
               <div>
-                <label className="block text-xs font-black text-gray-400 uppercase tracking-wider mb-3">
+                <label className="block text-xs font-black text-gray-500 uppercase tracking-wider mb-3">
                   사용 시간대
                   {selectedTimes.length > 0 && (
                     <span className="ml-2 text-indigo-600 normal-case font-black">({selectedTimes.length}개 선택됨)</span>

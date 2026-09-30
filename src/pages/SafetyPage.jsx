@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Search, Info, AlertTriangle, ShieldAlert, Flame, Beaker, Scissors, GraduationCap, Phone, Sparkles } from 'lucide-react';
 import { safetyData } from '../data/safetyData';
 import { useAppConfig } from '../context/AppConfigContext';
+import ManualSearch from '../components/ManualSearch';
 
 const categories = [
   { name: '대응 체계', icon: ShieldAlert, color: 'bg-blue-50 text-blue-600 border-blue-100' },
@@ -10,13 +11,6 @@ const categories = [
   { name: '실험기구/물리', icon: Scissors, color: 'bg-orange-50 text-orange-600 border-orange-100' },
   { name: '화재/화상', icon: Flame, color: 'bg-red-50 text-red-600 border-red-100' },
   { name: '법규/지침', icon: GraduationCap, color: 'bg-gray-50 text-gray-600 border-gray-100' },
-];
-
-const QUICK_QUESTIONS = [
-  '사고 시 대응 절차',
-  '화학약품 눈 사고',
-  '화상 응급처치',
-  '비상 연락처',
 ];
 
 export default function SafetyPage() {
@@ -66,7 +60,7 @@ export default function SafetyPage() {
                   className={`flex flex-col items-center p-4 rounded-2xl border-2 transition-all group ${
                     selectedCategory === cat.name 
                        ? `${cat.color} border-current scale-105 shadow-md` 
-                       : 'bg-gray-50 border-transparent text-gray-400 hover:border-brand-200 hover:text-brand-600'
+                       : 'bg-gray-50 border-transparent text-gray-500 hover:border-brand-200 hover:text-brand-600'
                   }`}
                 >
                   <cat.icon className="w-7 h-7 mb-2 transition-transform group-hover:scale-110" />
@@ -98,7 +92,7 @@ export default function SafetyPage() {
                     <span className="ml-2 text-brand-600">{filteredResults.length}</span>
                   </h3>
                   {(selectedCategory || query) && (
-                    <button onClick={() => { setSelectedCategory(null); setQuery(''); setHasSearched(false); }} className="text-xs font-black text-gray-400 hover:text-gray-600">
+                    <button onClick={() => { setSelectedCategory(null); setQuery(''); setHasSearched(false); }} className="h-9 px-3 text-sm font-black text-gray-600 hover:text-gray-900">
                       초기화
                     </button>
                   )}
@@ -124,12 +118,14 @@ export default function SafetyPage() {
                     ))}
                   </div>
                 ) : (
-                  <div className="bg-white rounded-3xl p-16 text-center border-2 border-dashed border-gray-100">
-                    <AlertTriangle className="w-12 h-12 text-gray-200 mx-auto mb-4" />
-                    <p className="text-gray-400 font-black text-lg">해당 조건에 맞는 지침이 없습니다.</p>
-                    <p className="text-gray-400 text-sm font-medium mt-1">홈 화면의 AI 비서에게 질문하거나 선생님께 문의하세요.</p>
+                  <div className="bg-white rounded-3xl p-10 text-center border-2 border-dashed border-gray-100">
+                    <AlertTriangle className="w-12 h-12 text-gray-200 mx-auto mb-4" aria-hidden="true" />
+                    <p className="text-gray-600 font-black text-lg">요약 지침에는 해당 내용이 없습니다.</p>
+                    <p className="text-gray-500 text-sm font-medium mt-1">아래 계획 원문 검색 결과를 보거나, 홈 화면의 AI 비서에게 질문하세요.</p>
                   </div>
                 )}
+
+                <ManualSearch query={query} />
               </>
             ) : (
               /* 기본 화면: 도움말 카드 */

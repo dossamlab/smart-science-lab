@@ -44,7 +44,7 @@ function Emph({ children }) {
 
 function Lines({ items, max = 3 }) {
   const [open, setOpen] = useState(false);
-  if (items.length === 0) return <p className="text-sm text-gray-400">자료 없음 · 아래 원문 확인</p>;
+  if (items.length === 0) return <p className="text-sm text-gray-500">자료 없음 · 아래 원문 확인</p>;
   const shown = open ? items : items.slice(0, max);
   return (
     <>
@@ -69,7 +69,7 @@ function Tile({ icon: Icon, title, tone, children, note }) {
     <section className={`rounded-2xl border-2 p-4 ${tones[tone]}`}>
       <h4 className="flex items-center gap-2 font-black text-base mb-2"><Icon className="w-5 h-5 shrink-0" />{title}</h4>
       {children}
-      {note && <p className="mt-2 text-xs text-gray-400">{note}</p>}
+      {note && <p className="mt-2 text-xs text-gray-500">{note}</p>}
     </section>
   );
 }
@@ -146,7 +146,7 @@ export default function MsdsSummary({ sections }) {
                 </span>
               ))}
             </div>
-          ) : <p className="text-sm text-gray-400">자료 없음 · 아래 원문 확인</p>}
+          ) : <p className="text-sm text-gray-500">자료 없음 · 아래 원문 확인</p>}
         </Tile>
         <Tile icon={Ban} title="피해야 할 것" tone="amber"><Lines items={avoid} /></Tile>
         <Tile icon={Archive} title="보관" tone="amber"><Lines items={storageItems} max={2} /></Tile>

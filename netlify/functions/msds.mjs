@@ -41,15 +41,20 @@ async function call(op, params) {
 }
 
 export async function search(q) {
+  const byCas = CAS_RE.test(q);
   const xml = await call('getChemList001', {
-    searchWrd: q, searchCnd: CAS_RE.test(q) ? 1 : 0, numOfRows: 30, pageNo: 1,
+    searchWrd: q, searchCnd: byCas ? 1 : 0, numOfRows: 30, pageNo: 1,
   });
-  return parseItems(xml).map(item => ({
+  const items = parseItems(xml).map(item => ({
     chemId: tag(item, 'chemId'),
-    name: tag(item, 'chemNameKor'),
+    // KOSHA sometimes embeds markup in names ("포름알데히드<br/>( 관용명 : 폼알데하이드 )").
+    name: tag(item, 'chemNameKor').replace(/<br\s*\/?>/gi, ' ').replace(/\s+/g, ' ').trim(),
     cas: tag(item, 'casNo'),
     lastDate: tag(item, 'lastDate'),
   }));
+  // KOSHA matches CAS as a substring (67-56-1 also returns 867-56-1); keep exact hits when there are any.
+  const exact = byCas ? items.filter(item => item.cas === q) : [];
+  return exact.length ? exact : items;
 }
 
 export async function detail(chemId) {

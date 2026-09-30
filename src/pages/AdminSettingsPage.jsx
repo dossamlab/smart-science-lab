@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { Settings, Save, CheckCircle2, AlertCircle, Eye, EyeOff,
-  School, KeyRound, FileText, Link2, ChevronRight, ArrowLeft, Info, ExternalLink } from 'lucide-react';
+import { Settings, Save, CheckCircle2, AlertCircle,
+  School, FileText, Link2, ArrowLeft, Info, QrCode, ClipboardCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useAppConfig } from '../context/AppConfigContext';
+import PinGate from '../components/PinGate';
 
 const TABS = [
   { id: 'school', label: '학교 기본 정보', icon: School },
-  { id: 'api',    label: 'API 키 설정',   icon: KeyRound },
   { id: 'guide',  label: '학교 안전 지침', icon: FileText },
   { id: 'link',   label: 'Google 연동',   icon: Link2 },
 ];
@@ -16,7 +16,7 @@ function Field({ label, hint, children }) {
     <div className="space-y-1.5">
       <label className="text-xs font-black text-gray-500 uppercase tracking-widest">{label}</label>
       {children}
-      {hint && <p className="text-xs text-gray-400 font-medium">{hint}</p>}
+      {hint && <p className="text-xs text-gray-500 font-medium">{hint}</p>}
     </div>
   );
 }
@@ -131,72 +131,6 @@ function TabSchool({ draft, set }) {
   );
 }
 
-/* ─── Tab: API 키 설정 ─── */
-function TabApi({ draft, set }) {
-  const [show, setShow] = useState(false);
-  return (
-    <div className="space-y-5">
-      <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 text-sm text-amber-700 font-medium flex gap-2">
-        <Info className="w-4 h-4 mt-0.5 shrink-0" />
-        API 키는 이 기기의 브라우저(localStorage)에만 저장됩니다. 외부로 전송되지 않습니다.
-      </div>
-
-      <Field
-        label="Google Gemini API 키"
-        hint="AI 비서 기능에 사용됩니다. 키 미입력 시 로컬 키워드 검색 모드로 작동합니다."
-      >
-        <div className="relative">
-          <input
-            type={show ? 'text' : 'password'}
-            value={draft.geminiApiKey}
-            onChange={e => set('geminiApiKey', e.target.value)}
-            placeholder="AIza..."
-            className="w-full pl-4 pr-12 py-3 rounded-xl bg-gray-50 border-2 border-transparent
-              focus:border-brand-400 focus:bg-white focus:outline-none font-mono text-sm text-gray-800
-              placeholder:text-gray-300 transition-all"
-          />
-          <button
-            type="button"
-            onClick={() => setShow(v => !v)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-          >
-            {show ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-          </button>
-        </div>
-      </Field>
-
-      <a
-        href="https://aistudio.google.com/apikey"
-        target="_blank"
-        rel="noreferrer"
-        className="flex items-center gap-3 p-4 rounded-2xl border-2 border-dashed border-brand-200
-          hover:border-brand-400 hover:bg-brand-50 transition-all group"
-      >
-        <div className="w-10 h-10 rounded-xl bg-brand-100 flex items-center justify-center shrink-0 group-hover:bg-brand-200 transition-colors">
-          <ExternalLink className="w-5 h-5 text-brand-600" />
-        </div>
-        <div>
-          <p className="font-black text-gray-800 text-sm">Google AI Studio에서 API 키 발급</p>
-          <p className="text-xs text-gray-500 font-medium">aistudio.google.com/apikey → Create API key</p>
-        </div>
-        <ChevronRight className="w-5 h-5 text-gray-400 ml-auto group-hover:text-brand-600 transition-colors" />
-      </a>
-
-      <div className="bg-gray-50 rounded-2xl p-5 space-y-3">
-        <p className="text-xs font-black text-gray-500 uppercase tracking-widest">발급 방법</p>
-        {[
-          '① Google AI Studio (aistudio.google.com) 접속 후 Google 계정 로그인',
-          '② 좌측 메뉴 또는 상단의 "Get API key" 클릭',
-          '③ "Create API key" 버튼 클릭 → 프로젝트 선택',
-          '④ 생성된 키를 복사하여 위 입력창에 붙여넣기',
-        ].map((step, i) => (
-          <p key={i} className="text-sm text-gray-600 font-medium">{step}</p>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /* ─── Tab: 학교 안전 지침 ─── */
 function TabGuide({ draft, set }) {
   return (
@@ -230,12 +164,12 @@ function TabLink({ draft, set }) {
     <div className="space-y-5">
       <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 text-sm text-blue-700 font-medium flex gap-2">
         <Info className="w-4 h-4 mt-0.5 shrink-0" />
-        Google Apps Script를 연동하면 기자재 예약 데이터를 Google 스프레드시트로 관리할 수 있습니다.
+        Google Apps Script를 연동하면 기자재 예약, 보유 시약 목록, 안전점검 기록을 Google 스프레드시트로 관리합니다.
       </div>
 
       <Field
         label="Google Apps Script 배포 URL"
-        hint="예약 신청 저장 및 기자재 목록 관리에 사용됩니다."
+        hint="예약, 보유 시약 목록(1행에 'CAS번호' 열이 있는 시트), 안전점검 기록에 사용됩니다."
       >
         <Input
           value={draft.gasUrl}
@@ -247,10 +181,10 @@ function TabLink({ draft, set }) {
       <div className="bg-gray-50 rounded-2xl p-5 space-y-3">
         <p className="text-xs font-black text-gray-500 uppercase tracking-widest">Apps Script 연동 방법</p>
         {[
-          '① 제공된 Apps Script 파일(GAS)을 본인 Google 계정으로 복사',
-          '② 스크립트 상단의 SPREADSHEET_ID를 본인 시트 ID로 변경',
-          '③ 배포 → 새 배포 → 웹 앱 → 액세스: 모든 사용자 → 배포',
-          '④ 생성된 배포 URL을 위 입력창에 붙여넣기',
+          '① 스프레드시트에서 [확장 프로그램 → Apps Script]를 열고 저장소의 apps-script/Code.gs 내용을 붙여넣기',
+          '② 코드를 고친 경우: 배포 → 배포 관리 → 기존 배포 수정(연필) → 버전: 새 버전 → 배포 (URL 유지)',
+          '③ 처음 만드는 경우: 배포 → 새 배포 → 웹 앱 → 실행: 나, 액세스: 모든 사용자 → 생성된 URL을 위 칸에 입력',
+          '④ 스프레드시트 공유는 "제한됨"으로 두세요. 웹 앱은 소유자 권한으로 실행되므로 공개할 필요가 없습니다.',
         ].map((step, i) => (
           <p key={i} className="text-sm text-gray-600 font-medium">{step}</p>
         ))}
@@ -284,6 +218,7 @@ export default function AdminSettingsPage() {
   const currentTab = TABS.find(t => t.id === activeTab);
 
   return (
+    <PinGate>
     <div className="max-w-3xl mx-auto animate-in fade-in duration-500 pb-24 px-4">
       {/* 뒤로가기 */}
       <Link to="/" className="inline-flex items-center gap-2 text-brand-600 font-bold mb-8 hover:text-brand-800 transition-colors">
@@ -297,8 +232,18 @@ export default function AdminSettingsPage() {
         </div>
         <div>
           <h1 className="text-3xl font-black text-gray-900">관리자 설정</h1>
-          <p className="text-gray-500 font-medium text-sm mt-0.5">학교명, API 키, 지침, Google 연동을 설정합니다.</p>
+          <p className="text-gray-500 font-medium text-sm mt-0.5">학교명, 비상연락처, 지침, Google 연동을 설정합니다.</p>
         </div>
+      </div>
+
+      {/* 관리 도구 */}
+      <div className="grid sm:grid-cols-2 gap-3 mb-8">
+        <Link to="/labels" className="flex items-center gap-3 h-16 px-5 rounded-2xl bg-white border border-gray-100 shadow-sm font-black text-gray-800 hover:border-brand-300">
+          <QrCode className="w-6 h-6 text-brand-600" aria-hidden="true" /> 시약병 QR 라벨 인쇄
+        </Link>
+        <Link to="/inspection" className="flex items-center gap-3 h-16 px-5 rounded-2xl bg-white border border-gray-100 shadow-sm font-black text-gray-800 hover:border-brand-300">
+          <ClipboardCheck className="w-6 h-6 text-brand-600" aria-hidden="true" /> 월간 안전점검 기록
+        </Link>
       </div>
 
       {/* 탭 내비게이션 */}
@@ -316,7 +261,7 @@ export default function AdminSettingsPage() {
             >
               <Icon className="w-4 h-4 shrink-0" />
               <span className="hidden sm:inline">{tab.label}</span>
-              <span className="sm:hidden text-[10px]">{tab.label.split(' ')[0]}</span>
+              <span className="sm:hidden text-xs">{tab.label.split(' ')[0]}</span>
             </button>
           );
         })}
@@ -330,7 +275,6 @@ export default function AdminSettingsPage() {
         </h2>
 
         {activeTab === 'school' && <TabSchool draft={draft} set={set} />}
-        {activeTab === 'api'    && <TabApi    draft={draft} set={set} />}
         {activeTab === 'guide'  && <TabGuide  draft={draft} set={set} />}
         {activeTab === 'link'   && <TabLink   draft={draft} set={set} />}
       </div>
@@ -358,5 +302,6 @@ export default function AdminSettingsPage() {
         </button>
       </div>
     </div>
+    </PinGate>
   );
 }
