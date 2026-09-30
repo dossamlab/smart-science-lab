@@ -29,6 +29,8 @@ export default function ReservationPage() {
 
   const [reservations, setReservations] = useState([]);
   const [equipmentList, setEquipmentList] = useState(DEFAULT_EQUIPMENTS);
+  const [equipmentUnits, setEquipmentUnits] = useState({}); // { '학생용 노트북': 30 } from the sheet's 수량 column
+  const [selectedUnit, setSelectedUnit] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const [loading, setLoading] = useState(Boolean(API_URL));
@@ -71,6 +73,7 @@ export default function ReservationPage() {
           typeof value === 'string' && value.includes('T') ? getLocalDateString(new Date(value)) : value;
         setReservations(resData.map(r => ({ ...r, '날짜': normalizeDate(r['날짜']) })));
         if (result.data.equipments?.length > 0) setEquipmentList(result.data.equipments);
+        setEquipmentUnits(result.data.equipmentUnits || {});
       })
       .catch(error => console.error('Fetch error:', error))
       .finally(() => { if (active) setLoading(false); });
@@ -78,6 +81,11 @@ export default function ReservationPage() {
   }, [API_URL, refreshKey]);
 
   const refresh = () => setRefreshKey(k => k + 1);
+
+  // Active bookings of `equipment` on `date` that use any of `slots`.
+  const bookingsOf = (equipment, date, slots) => reservations.filter(r =>
+    r['날짜'] === date && r['기자재'] === equipment && r['상태'] === '예약완료' &&
+    String(r['시간대']).split(', ').some(s => slots.includes(s)));
 
   const toggleTime = (slot) => {
     setSelectedTimes(prev =>
@@ -99,12 +107,16 @@ export default function ReservationPage() {
       setMessage({ type: 'error', text: '지난 날짜는 예약할 수 없습니다. 달력에서 오늘 이후 날짜를 고르세요.' });
       return;
     }
-    const taken = selectedTimes.filter(slot => reservations.some(r =>
-      r['날짜'] === dateStr && r['기자재'] === finalEquipment && r['상태'] === '예약완료' &&
-      String(r['시간대']).split(', ').includes(slot)
-    ));
+    // Multi-unit equipment (laptops) is booked per numbered unit, so only the same number conflicts.
+    const units = equipmentUnits[finalEquipment] || 0;
+    if (units > 1 && !(selectedUnit >= 1 && selectedUnit <= units)) {
+      setMessage({ type: 'error', text: `${finalEquipment} 번호를 골라 주세요.` });
+      return;
+    }
+    const taken = selectedTimes.filter(slot => bookingsOf(finalEquipment, dateStr, [slot])
+      .some(r => units <= 1 || String(r['번호']) === String(selectedUnit)));
     if (taken.length > 0) {
-      setMessage({ type: 'error', text: `이미 예약된 시간대입니다: ${taken.join(', ')}` });
+      setMessage({ type: 'error', text: `${units > 1 ? `${selectedUnit}번은 ` : ''}이미 예약된 시간대입니다: ${taken.join(', ')}` });
       return;
     }
 
@@ -118,18 +130,20 @@ export default function ReservationPage() {
         studentId: applicantId,
         date: dateStr,
         time: selectedTimes.join(', '),
-        equipment: finalEquipment
+        equipment: finalEquipment,
+        unit: units > 1 ? selectedUnit : undefined
       });
       if (result.status !== 'success') {
         setMessage({ type: 'error', text: result.message || '예약하지 못했습니다.' });
         return;
       }
-      setMessage({ type: 'success', text: '예약되었습니다.' });
+      setMessage({ type: 'success', text: units > 1 ? `${finalEquipment} ${selectedUnit}번이 예약되었습니다.` : '예약되었습니다.' });
       setApplicantName('');
       setApplicantId('');
       setSelectedEquipment('');
       setManualEquipment('');
       setSelectedTimes([]);
+      setSelectedUnit(0);
       refresh();
     } catch {
       setMessage({ type: 'error', text: '연결 오류가 발생했습니다. 인터넷 연결을 확인해 주세요.' });
@@ -227,8 +241,9 @@ export default function ReservationPage() {
   const dailyReservations = reservations.filter(r => r['날짜'] === selectedDateStr && r['상태'] !== '예약취소');
   const activeToday = dailyReservations.filter(r => r['상태'] === '예약완료');
   const gridEquipments = [...new Set([...equipmentList, ...activeToday.map(r => r['기자재'])])];
-  const bookedBy = (equipment, slot) => activeToday.find(r =>
-    r['기자재'] === equipment && String(r['시간대']).split(', ').includes(slot));
+  const bookingEquipment = selectedEquipment === 'manual' ? manualEquipment : selectedEquipment;
+  const bookingUnits = equipmentUnits[bookingEquipment] || 0;
+  const takenUnits = new Set(bookingsOf(bookingEquipment, selectedDateStr, selectedTimes).map(r => Number(r['번호'])));
 
   return (
     <div className="max-w-6xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-500 pb-20 px-4">
@@ -280,13 +295,17 @@ export default function ReservationPage() {
                 <tbody>
                   {gridEquipments.map(eq => (
                     <tr key={eq}>
-                      <th scope="row" className="text-left font-bold text-gray-800 px-2 whitespace-nowrap max-w-[10rem] truncate">{eq}</th>
+                      <th scope="row" className="text-left font-bold text-gray-800 px-2 whitespace-nowrap max-w-[10rem] truncate">
+                        {eq}{equipmentUnits[eq] > 1 && <span className="ml-1 text-xs font-medium text-gray-500">{equipmentUnits[eq]}대</span>}
+                      </th>
                       {TIME_SLOTS.map(slot => {
-                        const booking = bookedBy(eq, slot);
-                        if (booking) {
+                        const booked = bookingsOf(eq, selectedDateStr, [slot]);
+                        const units = equipmentUnits[eq] || 0;
+                        // A multi-unit cell stays open until every unit is booked and shows booked/total.
+                        if (booked.length > 0 && booked.length >= Math.max(units, 1)) {
                           return (
                             <td key={slot} className="h-11 rounded-lg bg-indigo-100 text-indigo-800 text-xs font-bold text-center px-1">
-                              {booking['신청자명']}
+                              {units > 1 ? `${booked.length}/${units}` : booked[0]['신청자명']}
                             </td>
                           );
                         }
@@ -297,10 +316,10 @@ export default function ReservationPage() {
                               type="button"
                               disabled={selectedIsPast}
                               onClick={() => pickSlot(eq, slot)}
-                              aria-label={`${eq} ${slot} 예약하기`}
-                              className={`w-full h-11 rounded-lg font-black transition-colors ${chosen ? 'bg-indigo-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-indigo-50 hover:text-indigo-600'} disabled:cursor-not-allowed disabled:hover:bg-gray-50 disabled:hover:text-gray-400`}
+                              aria-label={`${eq} ${slot} 예약하기${booked.length ? ` (${units}대 중 ${booked.length}대 예약됨)` : ''}`}
+                              className={`w-full h-11 rounded-lg font-black transition-colors ${chosen ? 'bg-indigo-600 text-white' : booked.length ? 'bg-indigo-50 text-indigo-700 text-xs hover:bg-indigo-100' : 'bg-gray-50 text-gray-500 hover:bg-indigo-50 hover:text-indigo-600'} disabled:cursor-not-allowed disabled:hover:bg-gray-50 disabled:hover:text-gray-400`}
                             >
-                              {chosen ? '✓' : selectedIsPast ? '' : '+'}
+                              {chosen ? '✓' : booked.length ? `${booked.length}/${units}` : selectedIsPast ? '' : '+'}
                             </button>
                           </td>
                         );
@@ -330,7 +349,7 @@ export default function ReservationPage() {
                         <Package className="w-6 h-6" />
                       </div>
                       <div className="min-w-0 flex-grow">
-                        <div className="text-sm font-black text-gray-900 truncate">{res['기자재']}</div>
+                        <div className="text-sm font-black text-gray-900 truncate">{res['기자재']}{res['번호'] && ` ${res['번호']}번`}</div>
                         <div className="text-xs font-bold text-gray-500 mt-1">{res['신청자명']}</div>
                         <div className="text-xs text-gray-500 mt-0.5">{res['시간대']}</div>
                         {res['반납일시'] && <div className="text-xs font-bold text-gray-500 mt-1">반납: {res['반납일시']}</div>}
@@ -470,6 +489,33 @@ export default function ReservationPage() {
                   })}
                 </div>
               </div>
+
+              {/* 번호 선택: 수량이 2대 이상인 기자재(노트북 등) */}
+              {bookingUnits > 1 && (
+                <div>
+                  <label className="block text-xs font-black text-gray-500 uppercase tracking-wider mb-3">
+                    {bookingEquipment} 번호
+                    {selectedUnit >= 1 && selectedUnit <= bookingUnits && (
+                      <span className="ml-2 text-indigo-600 normal-case font-black">({selectedUnit}번 선택됨)</span>
+                    )}
+                  </label>
+                  {selectedTimes.length === 0 && <p className="text-xs text-gray-500 mb-2">시간대를 먼저 고르면 이미 예약된 번호가 흐리게 표시됩니다.</p>}
+                  <div className="grid grid-cols-6 gap-1.5" role="group" aria-label={`${bookingEquipment} 번호 선택`}>
+                    {Array.from({ length: bookingUnits }, (_, i) => i + 1).map(n => {
+                      const taken = takenUnits.has(n);
+                      return (
+                        <button key={n} type="button" disabled={taken} onClick={() => setSelectedUnit(n)}
+                          aria-pressed={selectedUnit === n}
+                          aria-label={`${n}번${taken ? ', 이미 예약됨' : ''}`}
+                          className={`h-11 rounded-xl text-sm font-black transition-colors ${taken ? 'bg-gray-100 text-gray-400 line-through cursor-not-allowed' : selectedUnit === n ? 'bg-indigo-600 text-white' : 'bg-gray-50 text-gray-700 hover:bg-indigo-50'}`}
+                        >
+                          {n}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {message.text && (
                 <div className={`p-4 rounded-2xl flex items-center gap-3 font-bold text-sm ${message.type === 'success' ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-red-50 text-red-700 border border-red-100'}`}>

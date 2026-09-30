@@ -36,7 +36,7 @@ function load() {
     ['old1', '홍길동 (10101)', kstDate(2099, 10, 5), '1교시 (09:00~09:50)', '광학 현미경', '예약완료', kstDate(2099, 10, 1)],
     ['past1', '김철수 (20202)', kstDate(2020, 3, 2), '2교시 (10:00~10:50)', '광학 현미경', '예약완료', kstDate(2020, 3, 1)],
   ]);
-  const eq = makeSheet('기자재목록', [['기자재명'], ['광학 현미경'], ['전자 저울']]);
+  const eq = makeSheet('기자재목록', [['기자재명', '수량'], ['광학 현미경'], ['전자 저울', 1], ['학생용 노트북', '3']]);
   const chem = makeSheet('시트1', [['이름', 'CAS번호', '화학식', '섹션1'], ['나트륨', '7440-23-5', 'Na', ''], ['물', '7732-18-5', 'H2O', ''], ['잘못', 'abc', '', '']]);
   const sheets = [chem, res, eq];
   const ss = {
@@ -71,8 +71,9 @@ test('GET masks names, hides student IDs, sends KST dates and adds the 학번 co
   assert.equal(g.data.reservations[0]['신청자명'], '홍*동');
   assert.equal(g.data.reservations[0]['날짜'], '2099-10-05');
   assert.ok(!JSON.stringify(g).includes('10101'));
-  assert.deepEqual(g.data.equipments, ['광학 현미경', '전자 저울']);
-  assert.ok(res.rows[0].includes('학번') && res.rows[0].includes('반납일시'));
+  assert.deepEqual(g.data.equipments, ['광학 현미경', '전자 저울', '학생용 노트북']);
+  assert.deepEqual({ ...g.data.equipmentUnits }, { '학생용 노트북': 3 });
+  assert.ok(['학번', '반납일시', '번호'].every(h => res.rows[0].includes(h)));
 });
 
 test('GET ?type=chemicals reads the CAS번호 sheet and skips bad rows', () => {
@@ -98,6 +99,23 @@ test('booking: conflicts, past dates and missing fields are refused', () => {
   assert.equal(row[H.indexOf('학번')], '20202');
   assert.equal(row[H.indexOf('신청자명')], '김철수');
   assert.equal(row[H.indexOf('날짜')], '2099-10-05');
+});
+
+test('numbered units: each laptop is booked on its own and only the same number conflicts', () => {
+  const { ctx, post, res } = load();
+  const base = { action: 'book', studentName: '김철수', studentId: '20202', equipment: '학생용 노트북', date: '2099-10-05', time: '1교시 (09:00~09:50)' };
+  assert.match(post(base).message, /번호\(1~3\)/);
+  assert.match(post({ ...base, unit: 4 }).message, /번호\(1~3\)/);
+  assert.equal(post({ ...base, unit: 2 }).status, 'success');
+  assert.equal(post({ ...base, studentName: '이영희', studentId: '30303', unit: '3' }).status, 'success');
+  assert.match(post({ ...base, studentId: '10101', unit: 2, time: '2교시 (10:00~10:50), 1교시 (09:00~09:50)' }).message, /^2번은 이미 예약된 시간대입니다: 1교시/);
+  const laptops = ctx.doGet({ parameter: {} }).data.reservations.filter(r => r['기자재'] === '학생용 노트북');
+  assert.deepEqual(laptops.map(r => [r['번호'], r['신청자명']]), [['2', '김*수'], ['3', '이*희']]);
+
+  // Single items ignore a stray unit and still conflict as a whole.
+  assert.equal(post({ ...base, equipment: '전자 저울', unit: 2 }).status, 'success');
+  assert.equal(res.rows.at(-1)[res.rows[0].indexOf('번호')], '');
+  assert.equal(post({ ...base, equipment: '전자 저울', studentId: '10101' }).status, 'error');
 });
 
 test('return and cancel need the booker\'s 학번; past bookings cannot be cancelled', () => {

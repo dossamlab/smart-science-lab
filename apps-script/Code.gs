@@ -8,8 +8,9 @@
  * 학번은 반납·취소 본인 확인에만 쓴다. 스프레드시트 공유는 '제한됨'으로 둔다(웹 앱은 소유자 권한으로 실행).
  *
  * 시트는 이름이 아니라 1행 헤더로 찾는다.
- *   예약 시트: 1행에 '신청자명'이 있는 시트 (없던 '학번'·'반납일시' 열은 자동으로 추가)
+ *   예약 시트: 1행에 '신청자명'이 있는 시트 (없던 '학번'·'반납일시'·'번호' 열은 자동으로 추가)
  *   기자재 시트: 1행 A열이 '기자재'로 시작하는 다른 시트의 A열 목록 (없으면 앱 기본 목록 사용)
+ *     1행에 '수량' 열을 두고 2 이상을 적은 기자재(예: 학생용 노트북 30)는 1번부터 번호별로 따로 예약된다
  *   보유 시약 시트: 1행에 'CAS번호'가 있는 시트. 쓰는 열: 이름, CAS번호, 화학식, 분류, 보관위치 (없는 열은 비워 둠)
  *   안전점검 시트: '안전점검기록' (없으면 첫 기록 때 자동으로 만든다)
  *
@@ -42,12 +43,14 @@ function doGet(e) {
       '날짜': formatDate_(r['날짜']),
       '시간대': r['시간대'],
       '기자재': r['기자재'],
+      '번호': r['번호'] ? String(r['번호']) : '',
       '상태': r['상태'],
       '신청일시': formatDateTime_(r['신청일시']),
       '반납일시': formatDateTime_(r['반납일시'])
     };
   });
-  return json_({ status: 'success', data: { reservations: reservations, equipments: readEquipments_() } });
+  var equipment = readEquipments_();
+  return json_({ status: 'success', data: { reservations: reservations, equipments: equipment.names, equipmentUnits: equipment.units } });
 }
 
 function doPost(e) {
@@ -84,16 +87,28 @@ function book_(body) {
   }
   if (date < today_()) return { status: 'error', message: '지난 날짜는 예약할 수 없습니다.' };
 
+  // Equipment with a 수량 of 2+ (e.g. 30 laptops) is booked per numbered unit; conflicts are per unit.
+  var total = readEquipments_().units[equipment] || 0;
+  var unit = '';
+  if (total > 1) {
+    var n = parseInt(body.unit, 10);
+    if (!(n >= 1 && n <= total)) return { status: 'error', message: equipment + ' 번호(1~' + total + ')를 골라 주세요.' };
+    unit = String(n);
+  }
+
   var sheet = findReservationSheet_();
   var slots = time.split(', ');
   var taken = [];
   readRows_(sheet).forEach(function (r) {
     if (r['상태'] !== '예약완료' || r['기자재'] !== equipment || formatDate_(r['날짜']) !== date) return;
+    if (unit && String(r['번호'] || '') !== unit) return;
     String(r['시간대']).split(', ').forEach(function (s) {
       if (slots.indexOf(s) !== -1 && taken.indexOf(s) === -1) taken.push(s);
     });
   });
-  if (taken.length) return { status: 'error', message: '이미 예약된 시간대입니다: ' + taken.join(', ') };
+  if (taken.length) {
+    return { status: 'error', message: (unit ? unit + '번은 ' : '') + '이미 예약된 시간대입니다: ' + taken.join(', ') };
+  }
 
   var id = 'R' + new Date().getTime();
   appendByHeader_(sheet, {
@@ -103,6 +118,7 @@ function book_(body) {
     '날짜': date,
     '시간대': time,
     '기자재': equipment,
+    '번호': unit,
     '상태': '예약완료',
     '신청일시': Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm'),
     '반납일시': ''
@@ -242,24 +258,33 @@ function findReservationSheet_() {
     if (sheet.getLastColumn() === 0) continue;
     var headers = headers_(sheet);
     if (headers.indexOf('신청자명') === -1) continue;
-    ensureHeaders_(sheet, ['학번', '반납일시']);
+    ensureHeaders_(sheet, ['학번', '반납일시', '번호']);
     return sheet;
   }
   throw new Error("1행에 '신청자명' 헤더가 있는 예약 시트를 찾지 못했습니다.");
 }
 
+/** { names: ['현미경', ...], units: { '학생용 노트북': 30 } } — units only for a 수량 of 2 or more. */
 function readEquipments_() {
   var sheets = ss_().getSheets();
   for (var i = 0; i < sheets.length; i++) {
     var sheet = sheets[i];
     if (sheet.getLastRow() < 2) continue;
-    var first = String(sheet.getRange(1, 1).getValue());
-    if (first.indexOf('기자재') !== 0 || headers_(sheet).indexOf('신청자명') !== -1) continue;
-    return sheet.getRange(2, 1, sheet.getLastRow() - 1, 1).getValues()
-      .map(function (r) { return String(r[0]).trim(); })
-      .filter(function (v) { return v; });
+    var headers = headers_(sheet);
+    if (headers[0].indexOf('기자재') !== 0 || headers.indexOf('신청자명') !== -1) continue;
+    var qty = headers.indexOf('수량');
+    var names = [];
+    var units = {};
+    sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues().forEach(function (r) {
+      var name = String(r[0]).trim();
+      if (!name) return;
+      names.push(name);
+      var n = qty === -1 ? 0 : parseInt(r[qty], 10);
+      if (n > 1) units[name] = n;
+    });
+    return { names: names, units: units };
   }
-  return [];
+  return { names: [], units: {} };
 }
 
 /** Adds any of `wanted` missing from row 1, at the end, as text (so '24-1' never turns into a date). */
