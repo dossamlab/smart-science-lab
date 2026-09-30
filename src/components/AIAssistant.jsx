@@ -133,7 +133,7 @@ export default function AIAssistant() {
               key={i}
               onClick={() => handleSendMessage(q)}
               disabled={isLoading}
-              className="text-[9px] font-black px-2 py-1 rounded-lg bg-gray-100 text-gray-500 hover:bg-brand-50 hover:text-brand-600 transition-colors disabled:opacity-50"
+              className="text-xs font-black px-3 py-2 rounded-lgbg-gray-100 text-gray-500 hover:bg-brand-50 hover:text-brand-600 transition-colors disabled:opacity-50"
             >
               {q}
             </button>

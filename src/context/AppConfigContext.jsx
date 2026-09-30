@@ -16,7 +16,6 @@ export const DEFAULT_CONFIG = {
   nearbyHospitalPhone: env.VITE_HOSPITAL_PHONE || '',
   geminiApiKey: '',
   schoolGuidelines: '',
-  spreadsheetId: env.VITE_MSDS_SHEET_ID || '',
   gasUrl: env.VITE_RESERVATION_API_URL || '',
   isConfigured: Boolean(env.VITE_SCHOOL_NAME),
 };

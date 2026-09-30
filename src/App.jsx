@@ -1,12 +1,12 @@
 import { useEffect, useRef } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import HomePage from './pages/HomePage';
 import SafetyPage from './pages/SafetyPage';
 import MsdsPage from './pages/MsdsPage';
 import ReservationPage from './pages/ReservationPage';
 import AdminSettingsPage from './pages/AdminSettingsPage';
 import SosButton from './components/SosButton';
-import { ShieldAlert, Beaker, CalendarClock, Shield } from 'lucide-react';
+import { ShieldAlert, Beaker, CalendarClock, Shield, Home } from 'lucide-react';
 import { useAppConfig } from './context/AppConfigContext';
 
 function AutoRedirectHandler() {
@@ -71,18 +71,28 @@ function AppContent() {
                 </Link>
               </nav>
 
-              <div className="md:hidden flex items-center">
-                <button className="text-gray-500 hover:text-gray-900 focus:outline-none">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16m-7 6h7" />
-                  </svg>
-                </button>
-              </div>
             </div>
           </div>
         </header>
 
-        <main className="flex-grow w-full max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+        {/* Phones: bottom tab bar within thumb reach instead of a header menu */}
+        <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-white border-t border-gray-200 grid grid-cols-4 pb-[env(safe-area-inset-bottom)]">
+          {[
+            { to: '/', label: '홈', icon: Home },
+            { to: '/safety', label: '안전', icon: ShieldAlert },
+            { to: '/msds', label: 'MSDS', icon: Beaker },
+            { to: '/reservation', label: '예약', icon: CalendarClock },
+          ].map(({ to, label, icon: Icon }) => (
+            <NavLink key={to} to={to} end
+              className={({ isActive }) => `flex flex-col items-center justify-center gap-1 h-16 text-xs font-bold ${isActive ? 'text-brand-600' : 'text-gray-500'}`}
+            >
+              <Icon className="w-6 h-6" />
+              {label}
+            </NavLink>
+          ))}
+        </nav>
+
+        <main className="flex-grow w-full max-w-7xl mx-auto p-4 pb-28 sm:p-6 sm:pb-28 md:pb-8 lg:p-8">
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/safety" element={<SafetyPage />} />

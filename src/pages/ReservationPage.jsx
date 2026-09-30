@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { Calendar as CalendarIcon, Clock, Package, User, CheckCircle2, AlertCircle, Loader2, ChevronLeft, ChevronRight, Plus, RotateCcw, Hash } from 'lucide-react';
-import { Link } from 'react-router-dom';
 import { useAppConfig } from '../context/AppConfigContext';
 
 const DEFAULT_EQUIPMENTS = [
@@ -25,6 +24,8 @@ export default function ReservationPage() {
   const [applicantName, setApplicantName] = useState('');
   const [applicantId, setApplicantId] = useState('');
   const [returningId, setReturningId] = useState(null); // 반납 확인 중인 ID
+  const [returnStudentId, setReturnStudentId] = useState('');
+  const [returnError, setReturnError] = useState('');
 
   const [reservations, setReservations] = useState([]);
   const [equipmentList, setEquipmentList] = useState(DEFAULT_EQUIPMENTS);
@@ -43,6 +44,19 @@ export default function ReservationPage() {
     return `${year}-${month}-${day}`;
   };
 
+  // Code.gs answers JSON; the pre-2026-09 script's answer may not parse, which meant "sent".
+  const post = async (payload) => {
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(payload)
+    });
+    return res.json().catch(() => ({ status: 'success' }));
+  };
+
+  const normalizeDate = (value) =>
+    typeof value === 'string' && value.includes('T') ? getLocalDateString(new Date(value)) : value;
+
   const fetchReservations = async () => {
     if (!API_URL) return;
     setLoading(true);
@@ -53,7 +67,8 @@ export default function ReservationPage() {
       if (result.status === 'success' && result.data) {
         // 객체 형태(reservations)나 배열 형태 모두 대응
         const resData = result.data.reservations || (Array.isArray(result.data) ? result.data : []);
-        setReservations(resData);
+        // Sheets date cells arrive as UTC ISO (KST midnight = previous day 15:00Z); compare in local date.
+        setReservations(resData.map(r => ({ ...r, '날짜': normalizeDate(r['날짜']) })));
         
         if (result.data.equipments?.length > 0) {
           setEquipmentList(result.data.equipments);
@@ -83,83 +98,66 @@ export default function ReservationPage() {
       return;
     }
 
+    const dateStr = getLocalDateString(selectedDate);
+    const taken = selectedTimes.filter(slot => reservations.some(r =>
+      r['날짜'] === dateStr && r['기자재'] === finalEquipment && r['상태'] === '예약완료' &&
+      String(r['시간대']).split(', ').includes(slot)
+    ));
+    if (taken.length > 0) {
+      setMessage({ type: 'error', text: `이미 예약된 시간대입니다: ${taken.join(', ')}` });
+      return;
+    }
+
     setSubmitting(true);
     setMessage({ type: '', text: '' });
-    const dateStr = getLocalDateString(selectedDate);
-    const timeStr = selectedTimes.join(', ');
-
-    // --- 낙관적 업데이트 (Optimistic Update) ---
-    const tempId = 'temp-' + Date.now();
-    const newReservation = {
-      'ID': tempId,
-      '신청자명': `${applicantName} (${applicantId})`,
-      '날짜': dateStr,
-      '시간대': timeStr,
-      '기자재': finalEquipment,
-      '상태': '예약완료',
-      '신청일시': new Date().toLocaleString()
-    };
-    setReservations(prev => [newReservation, ...prev]);
-    // ------------------------------------------
-
     try {
-      await fetch(API_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({
-          action: 'book',
-          name: `${applicantName} (${applicantId})`,
-          date: dateStr,
-          time: timeStr,
-          equipment: finalEquipment
-        })
+      const result = await post({
+        action: 'book',
+        name: `${applicantName} (${applicantId})`, // read by the pre-2026-09 script
+        studentName: applicantName,
+        studentId: applicantId,
+        date: dateStr,
+        time: selectedTimes.join(', '),
+        equipment: finalEquipment
       });
-
-      setMessage({ type: 'success', text: '예약 신청이 전송되었습니다.' });
+      if (result.status !== 'success') {
+        setMessage({ type: 'error', text: result.message || '예약하지 못했습니다.' });
+        return;
+      }
+      setMessage({ type: 'success', text: '예약되었습니다.' });
       setApplicantName('');
       setApplicantId('');
       setSelectedEquipment('');
       setManualEquipment('');
       setSelectedTimes([]);
-      
-      // 실제 데이터 확인을 위한 동기화는 생략 (낙관적 업데이트 유지)
-      // Google Sheets 처리 지연으로 인한 덮어쓰기(깜빡임/사라짐) 현상 방지
-    } catch (error) {
-      // 에러 시 롤백
-      setReservations(prev => prev.filter(r => r.ID !== tempId));
-      setMessage({ type: 'error', text: '연결 오류가 발생했습니다.' });
+      fetchReservations();
+    } catch {
+      setMessage({ type: 'error', text: '연결 오류가 발생했습니다. 인터넷 연결을 확인해 주세요.' });
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleReturn = async (id) => {
-    // --- 낙관적 업데이트 (Optimistic Update) ---
-    const previousReservations = [...reservations];
-    setReservations(prev => prev.map(res => 
-      res['ID'] === id 
-        ? { ...res, '상태': '반납완료', '반납일시': new Date().toLocaleString() } 
-        : res
-    ));
-    setReturningId(null);
-    // ------------------------------------------
-
+    if (!returnStudentId.trim()) {
+      setReturnError('예약할 때 입력한 학번을 입력하세요.');
+      return;
+    }
     setActionLoadingId(id);
+    setReturnError('');
     try {
-      await fetch(API_URL, {
-        method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify({ action: 'return', id })
-      });
-      // 동기화 생략 (낙관적 업데이트 유지)
-    } catch (error) {
-      // 에러 시 롤백
-      setReservations(previousReservations);
-      alert('반납 처리 중 오류가 발생했습니다.');
+      const result = await post({ action: 'return', id, studentId: returnStudentId.trim() });
+      if (result.status !== 'success') {
+        setReturnError(result.message || '반납하지 못했습니다.');
+        return;
+      }
+      setReturningId(null);
+      setReturnStudentId('');
+      fetchReservations();
+    } catch {
+      setReturnError('연결 오류가 발생했습니다.');
     } finally {
-      setTimeout(() => setActionLoadingId(null), 2000);
+      setActionLoadingId(null);
     }
   };
 
@@ -212,16 +210,13 @@ export default function ReservationPage() {
         </div>
         <h1 className="text-4xl font-black text-gray-900 mb-4 tracking-tight">스마트 기자재 예약</h1>
         <p className="text-gray-500 text-lg font-medium mb-4">실시간으로 과학실 기자재 사용 현황을 확인하고 예약하세요.</p>
-        <Link to="/admin/settings" className="text-sm font-bold text-indigo-600 bg-indigo-50 px-4 py-2 rounded-full hover:bg-indigo-100 transition-colors">
-          ⚙️ 관리자 설정 (기자재 목록 관리)
-        </Link>
       </div>
 
       <div className="grid lg:grid-cols-3 gap-8">
         {/* Left: Calendar & Daily List */}
         <div className="lg:col-span-2 space-y-8">
           {/* Calendar */}
-          <div className="bg-white rounded-[2.5rem] shadow-xl border border-gray-100 p-8">
+          <div className="bg-white rounded-[2.5rem] shadow-xl border border-gray-100 p-4 sm:p-8">
             <div className="flex items-center justify-between mb-8">
               <h2 className="text-2xl font-black text-gray-900">{currentMonth.getFullYear()}년 {currentMonth.getMonth() + 1}월</h2>
               <div className="flex gap-2">
@@ -230,7 +225,7 @@ export default function ReservationPage() {
               </div>
             </div>
             <div className="grid grid-cols-7 gap-2 mb-4 text-center font-bold text-gray-400 text-xs uppercase tracking-widest">
-              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => <div key={d}>{d}</div>)}
+              {['일', '월', '화', '수', '목', '금', '토'].map(d => <div key={d}>{d}</div>)}
             </div>
             <div className="grid grid-cols-7 gap-2">{renderCalendar()}</div>
           </div>
@@ -263,22 +258,31 @@ export default function ReservationPage() {
                     {/* 반납 확인 UI */}
                     {res['상태'] === '예약완료' && (
                       returningId === res['ID'] ? (
-                        <div className="flex gap-2 mt-1">
-                          <button
-                            onClick={() => handleReturn(res['ID'])}
-                            disabled={actionLoadingId === res['ID']}
-                            className="flex-1 py-2 bg-red-500 text-white text-xs font-black rounded-xl hover:bg-red-600 transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
-                          >
-                            {actionLoadingId === res['ID'] ? <Loader2 className="w-4 h-4 animate-spin" /> : '반납 확인'}
-                          </button>
-                          <button onClick={() => setReturningId(null)} className="flex-1 py-2 bg-gray-100 text-gray-600 text-xs font-black rounded-xl hover:bg-gray-200 transition-colors">
-                            취소
-                          </button>
+                        <div className="mt-1 space-y-2">
+                          <input
+                            type="text" inputMode="numeric" autoComplete="off"
+                            value={returnStudentId} onChange={e => setReturnStudentId(e.target.value)}
+                            placeholder="예약한 사람의 학번"
+                            className="w-full h-11 px-3 rounded-xl bg-gray-50 border-2 border-transparent focus:border-indigo-300 focus:outline-none text-base font-bold"
+                          />
+                          {returnError && <p className="text-xs font-bold text-red-600">{returnError}</p>}
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleReturn(res['ID'])}
+                              disabled={actionLoadingId === res['ID']}
+                              className="flex-1 h-11 bg-red-500 text-white text-sm font-black rounded-xl hover:bg-red-600 transition-colors flex items-center justify-center gap-1 disabled:opacity-50"
+                            >
+                              {actionLoadingId === res['ID'] ? <Loader2 className="w-4 h-4 animate-spin" /> : '반납 확인'}
+                            </button>
+                            <button onClick={() => { setReturningId(null); setReturnError(''); }} className="flex-1 h-11 bg-gray-100 text-gray-600 text-sm font-black rounded-xl hover:bg-gray-200 transition-colors">
+                              취소
+                            </button>
+                          </div>
                         </div>
                       ) : (
                         <button
-                          onClick={() => setReturningId(res['ID'])}
-                          className="w-full py-2 flex items-center justify-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-black rounded-xl transition-colors"
+                          onClick={() => { setReturningId(res['ID']); setReturnStudentId(''); setReturnError(''); }}
+                          className="w-full h-11 flex items-center justify-center gap-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-sm font-black rounded-xl transition-colors"
                         >
                           <RotateCcw className="w-4 h-4" /> 반납하기
                         </button>
@@ -297,7 +301,7 @@ export default function ReservationPage() {
 
         {/* Right: Booking Form */}
         <div>
-          <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100/50 border border-indigo-50 p-8 sticky top-8">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl shadow-indigo-100/50 border border-indigo-50 p-6 sm:p-8 lg:sticky lg:top-24">
             <h3 className="text-2xl font-black text-gray-900 mb-6 flex items-center gap-2">
               <Plus className="w-7 h-7 text-indigo-600" />
               신규 예약 신청
@@ -320,7 +324,7 @@ export default function ReservationPage() {
                 <label className="block text-xs font-black text-gray-400 uppercase tracking-wider mb-2">신청자 학번</label>
                 <div className="relative">
                   <Hash className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-300" />
-                  <input type="text" value={applicantId} onChange={e => setApplicantId(e.target.value)}
+                  <input type="text" inputMode="numeric" value={applicantId} onChange={e => setApplicantId(e.target.value)}
                     placeholder="학번을 입력하세요 (예: 10101)"
                     className="w-full pl-12 pr-4 py-4 rounded-2xl bg-gray-50 border-2 border-transparent focus:border-indigo-300 focus:outline-none font-bold transition-all" required />
                 </div>

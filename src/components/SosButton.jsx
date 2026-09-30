@@ -64,7 +64,7 @@ export default function SosButton() {
     <>
       <button
         onClick={() => setIsOpen(true)}
-        className="fixed bottom-6 right-6 z-50 bg-red-600 text-white w-16 h-16 rounded-full flex flex-col items-center justify-center shadow-2xl hover:bg-red-700 hover:scale-110 active:scale-95 transition-all duration-300 animate-bounce group"
+        className="fixed bottom-24 md:bottom-6 right-4 md:right-6 z-50bg-red-600 text-white w-16 h-16 rounded-full flex flex-col items-center justify-center shadow-2xl hover:bg-red-700 hover:scale-110 active:scale-95 transition-all duration-300 animate-bounce group"
       >
         <AlertTriangle className="w-8 h-8 mb-0.5 group-hover:animate-pulse" />
         <span className="text-[10px] font-black">SOS</span>
@@ -72,7 +72,7 @@ export default function SosButton() {
 
       {isOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90dvh] overflow-y-auto animate-in zoom-in-95 duration-200">
             <div className="bg-red-600 px-6 py-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <AlertTriangle className="w-8 h-8 text-white animate-pulse" />
@@ -94,12 +94,12 @@ export default function SosButton() {
                   <button
                     key={key}
                     onClick={() => setActiveTab(key)}
-                    className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-2 rounded-lg text-sm font-bold transition-all ${
+                    className={`flex-1 flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 py-2.5 px-2 rounded-lg text-xs sm:text-sm font-bold transition-all ${
                       activeTab === key ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
                     }`}
                   >
                     {sosData[key].icon}
-                    <span className="hidden sm:inline">{sosData[key].title}</span>
+                    <span>{sosData[key].title}</span>
                   </button>
                 ))}
               </div>

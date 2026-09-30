@@ -204,7 +204,7 @@ function TabGuide({ draft, set }) {
       <div className="bg-green-50 border border-green-100 rounded-2xl p-4 text-sm text-green-700 font-medium flex gap-2">
         <Info className="w-4 h-4 mt-0.5 shrink-0" />
         <span>
-          <strong>경기도교육청 2026 과학실 안전관리 지침</strong>은 이미 내장되어 있습니다.<br />
+          <strong>과학실 안전사고 대응 지침 요약</strong>(사고 대응·약품·기구·화재·법규 5개 항목)은 이미 내장되어 있습니다.<br />
           아래에는 <strong>우리 학교만의 추가 지침</strong>만 입력하세요. (비상연락망, 실험실 현황 등)
         </span>
       </div>
@@ -230,22 +230,8 @@ function TabLink({ draft, set }) {
     <div className="space-y-5">
       <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 text-sm text-blue-700 font-medium flex gap-2">
         <Info className="w-4 h-4 mt-0.5 shrink-0" />
-        Google 스프레드시트와 Apps Script를 연동하면 기자재 예약 및 MSDS 데이터를 관리할 수 있습니다.
+        Google Apps Script를 연동하면 기자재 예약 데이터를 Google 스프레드시트로 관리할 수 있습니다.
       </div>
-
-      <Field
-        label="Google 스프레드시트 Sheet ID"
-        hint="스프레드시트 URL에서 /d/ 와 /edit 사이의 문자열을 입력하세요."
-      >
-        <Input
-          value={draft.spreadsheetId}
-          onChange={e => set('spreadsheetId', e.target.value)}
-          placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms"
-        />
-      </Field>
-      <p className="text-xs text-gray-400 bg-gray-50 rounded-xl px-4 py-3 font-mono">
-        https://docs.google.com/spreadsheets/d/<span className="text-brand-600 font-bold">여기가 Sheet ID</span>/edit
-      </p>
 
       <Field
         label="Google Apps Script 배포 URL"

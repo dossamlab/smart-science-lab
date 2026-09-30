@@ -47,10 +47,6 @@ export default function SafetyPage() {
           <h1 className="text-4xl font-black text-gray-900 tracking-tight">안전 지침 및 대응 매뉴얼</h1>
           <p className="text-gray-500 font-medium mt-2">공식 지침을 조회하거나 AI 비서에게 질문하세요.</p>
         </div>
-        <div className="hidden md:flex items-center gap-3 text-sm font-bold text-gray-400">
-          <Info className="w-5 h-5" />
-          마지막 업데이트: 2024.03
-        </div>
       </div>
 
       <div className="grid lg:grid-cols-12 gap-8 items-start">
@@ -74,7 +70,7 @@ export default function SafetyPage() {
                   }`}
                 >
                   <cat.icon className="w-7 h-7 mb-2 transition-transform group-hover:scale-110" />
-                  <span className="text-[10px] font-black">{cat.name}</span>
+                  <span className="text-xs font-black">{cat.name}</span>
                 </button>
               ))}
             </div>
@@ -131,7 +127,7 @@ export default function SafetyPage() {
                   <div className="bg-white rounded-3xl p-16 text-center border-2 border-dashed border-gray-100">
                     <AlertTriangle className="w-12 h-12 text-gray-200 mx-auto mb-4" />
                     <p className="text-gray-400 font-black text-lg">해당 조건에 맞는 지침이 없습니다.</p>
-                    <p className="text-gray-400 text-sm font-medium mt-1">우측 AI 비서에게 질문하거나 선생님께 문의하세요.</p>
+                    <p className="text-gray-400 text-sm font-medium mt-1">홈 화면의 AI 비서에게 질문하거나 선생님께 문의하세요.</p>
                   </div>
                 )}
               </>
