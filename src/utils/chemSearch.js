@@ -53,6 +53,48 @@ export function catalogMatches(query, catalog) {
   return catalog.filter(item => namesOf(item).some(n => normalize(n).includes(q)));
 }
 
+// One-letter names (황, 철) only count as their own word, optionally with a particle: "철 가루" yes, "철저히" no.
+const PARTICLES = '(?:이|가|을|를|은|는|에|에서|과|와|도|의|로|으로)?';
+
+/**
+ * Chemicals named in free text (an AI question), in order of appearance: [{ cas, name }].
+ * Longest names claim their text first, so "수산화 나트륨" is not also read as "나트륨"
+ * and "황산구리" not as "황산".
+ */
+export function findChemicals(text, catalog, limit = 3) {
+  const source = String(text);
+  const nameOf = (cas) => catalog.find(item => item.cas === cas)?.name || cas;
+  const hits = [];
+  const add = (cas, at) => { if (!hits.some(h => h.cas === cas)) hits.push({ cas, name: nameOf(cas), at }); };
+
+  for (const m of source.matchAll(/\b\d{2,7}-\d{2}-\d\b/g)) add(m[0], m.index / source.length);
+
+  const dictionary = [
+    ...catalog.flatMap(item => namesOf(item).map(n => [normalize(n), item.cas])),
+    ...Object.entries(ALIASES),
+  ].filter(([n]) => n.length >= 2).sort((a, b) => b[0].length - a[0].length);
+  const byName = new Map(dictionary);
+
+  let t = normalize(source);
+  for (const [name, cas] of dictionary) {
+    for (let at = t.indexOf(name); at !== -1; at = t.indexOf(name, at + name.length)) {
+      add(cas, at / t.length);
+      // "질산은" may be silver nitrate or "질산 + 은(topic particle)": hand both to the AI to decide from context.
+      const base = name.slice(0, -1);
+      if ('은는이가을를과와도의'.includes(name.at(-1)) && byName.has(base)) add(byName.get(base), at / t.length);
+      t = t.slice(0, at) + '\u0000'.repeat(name.length) + t.slice(at + name.length);
+    }
+  }
+
+  for (const item of catalog.filter(item => normalize(item.name).length === 1)) {
+    const word = new RegExp(`(^|[\\s,./(])${item.name}${PARTICLES}(?=[\\s,.?!)]|$)`);
+    const m = source.match(word);
+    if (m) add(item.cas, m.index / source.length);
+  }
+
+  return hits.sort((a, b) => a.at - b.at).slice(0, limit).map(({ cas, name }) => ({ cas, name }));
+}
+
 /** Merge the built-in list with sheet rows; the sheet wins on the same CAS (so it can fix names or add a location). */
 export function mergeCatalog(builtIn, sheetRows) {
   const byCas = new Map(builtIn.map(item => [item.cas, item]));

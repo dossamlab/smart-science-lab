@@ -1,10 +1,13 @@
 import { useState, useRef, useEffect } from 'react';
-import { SendHorizonal, Bot, Loader2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { SendHorizonal, Bot, Loader2, FileText } from 'lucide-react';
 import { safetyData } from '../data/safetyData';
+import { casListData } from '../data/casListData';
 import { askAI } from '../utils/ai';
+import { findChemicals } from '../utils/chemSearch';
 import { useAppConfig } from '../context/AppConfigContext';
 
-const SAFETY_QUESTIONS = ['사고 시 대응 절차', '화학약품 눈 사고', '화상 응급처치', '비상 연락처'];
+const SAFETY_QUESTIONS = ['사고 시 대응 절차', '염산이 눈에 들어갔어요', '화상 응급처치', '비상 연락처'];
 const CHEM_QUESTIONS = ['피부에 묻으면?', '다른 약품과 섞어도 되나요?', '어떻게 보관하나요?', '폐기는 어떻게 하나요?'];
 
 // Local keyword answer when AI is unavailable (safety mode only).
@@ -32,6 +35,20 @@ function AnswerText({ text }) {
   });
 }
 
+function MsdsLinks({ chemicals, label }) {
+  return (
+    <div className="mt-2 pt-2 border-t border-gray-100 flex flex-wrap items-center gap-1.5">
+      <span className="text-xs font-bold text-gray-500">{label}</span>
+      {chemicals.map(c => (
+        <Link key={c.cas} to={`/msds/${c.cas}`}
+          className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-bold">
+          <FileText className="w-3.5 h-3.5" aria-hidden="true" />{c.name}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 /** chem: { chemId, name } grounds answers on that substance's KOSHA MSDS. */
 export default function AIAssistant({ chem }) {
   const { config } = useAppConfig();
@@ -41,7 +58,7 @@ export default function AIAssistant({ chem }) {
     role: 'assistant',
     text: chem
       ? `${chem.name}에 대해 궁금한 점을 물어보세요. 안전보건공단 MSDS 자료를 근거로 답합니다.`
-      : `안녕하세요! ${schoolName} 안전 비서입니다. 궁금한 점을 편하게 물어보세요.`,
+      : `안녕하세요! ${schoolName} 안전 비서입니다. 시약 이름을 넣어 물어보면 그 물질의 MSDS를 근거로 답합니다. (예: 수산화나트륨이 손에 묻었어요)`,
   }]);
   const [inputText, setInputText] = useState('');
   const listRef = useRef(null);
@@ -66,13 +83,18 @@ export default function AIAssistant({ chem }) {
         schoolName,
         guidelines: config.schoolGuidelines,
       });
-      add(...result.notices.map(n => ({ role: 'assistant', text: `⚠️ ${n}` })), { role: 'assistant', text: result.text });
+      add(
+        ...result.notices.map(n => ({ role: 'assistant', text: `⚠️ ${n}` })),
+        { role: 'assistant', text: result.text, chemicals: result.chemicals, chemicalsLabel: '참조한 MSDS' },
+      );
     } catch (error) {
       const notices = (error.notices || []).map(n => ({ role: 'assistant', text: `⚠️ ${n}` }));
       const fallback = chem
         ? `⚠️ ${error.message}\n\n위의 '사고가 났을 때'와 전체 원문을 확인하거나 선생님께 문의하세요.`
         : `⚠️ ${error.message} 로컬 지침에서 찾은 답변입니다.\n\n${localAnswer(userText)}`;
-      add(...notices, { role: 'assistant', text: fallback });
+      // Without AI, still point to the named chemicals' own safety cards.
+      const named = chem ? [] : findChemicals(userText, casListData);
+      add(...notices, { role: 'assistant', text: fallback, chemicals: named, chemicalsLabel: '이 물질의 MSDS 바로 보기' });
     } finally {
       setIsLoading(false);
     }
@@ -100,6 +122,7 @@ export default function AIAssistant({ chem }) {
               ? 'bg-brand-600 text-white rounded-tr-none'
               : 'bg-white text-gray-800 border border-gray-100 rounded-tl-none'}`}>
               {msg.role === 'assistant' ? <AnswerText text={msg.text} /> : msg.text}
+              {msg.chemicals?.length > 0 && <MsdsLinks chemicals={msg.chemicals} label={msg.chemicalsLabel} />}
             </div>
           </div>
         ))}

@@ -1,9 +1,13 @@
 // Safety assistant for every device (students' phones included) without shipping a Gemini key.
-//   POST /api/ai { question, chemId?, schoolName?, guidelines? } -> { text, notices, model }
+//   POST /api/ai { question, chemId?, schoolName?, guidelines? } -> { text, notices, model, chemicals }
 // chemId grounds the answer on that substance's KOSHA MSDS (read through our cached /api/msds).
+// Without chemId, chemicals named in the question (up to 3) are looked up the same way, so
+// "염산이 손에 묻었어요" gets hydrochloric acid's first aid instead of a generic answer.
 
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import { safetyData } from '../../src/data/safetyData.js';
+import { casListData } from '../../src/data/casListData.js';
+import { findChemicals } from '../../src/utils/chemSearch.js';
 
 // Tried in order. Free tier limits are per model, so when one is blocked the next is often still open.
 export const MODEL_CHAIN = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash'];
@@ -86,25 +90,55 @@ const RULES = `[응답 규칙]
 3. 위험한 실험이나 약품 혼합을 권하지 마십시오. 실험 방법을 묻더라도 반드시 교사 지도 아래에서 하라고 덧붙이십시오.
 4. 연락처를 묻는 질문에는 화면 오른쪽 아래 SOS 버튼의 비상연락망을 확인하라고 안내하십시오.`;
 
-function safetyInstruction(schoolName, guidelines) {
+const CHEMICAL_RULES = `[물질별 답변 규칙]
+1. 질문에 나온 물질마다 아래 MSDS의 응급조치(눈·피부·흡입·삼킴), 누출, 화재, 피해야 할 물질 항목에 근거해 구체적으로 답하십시오. 일반적인 '시약이 묻었을 때' 요령으로 대신하지 마십시오.
+2. 물질이 둘 이상이면 물질별로 나누어 설명하십시오. 서로 섞였을 때의 위험은 MSDS '피해야 할 물질'이나 유해·위험문구에 근거가 있을 때만 말하고, 근거가 없으면 섞지 말고 교사에게 확인하라고 안내하십시오.
+3. MSDS 항목이 '자료없음'이면 경고표지의 대응 문구(P문구)를 쓰고, 그것도 없으면 일반 지침과 교사 문의를 안내하십시오.
+4. 한 이름이 두 물질로 읽힐 수 있으면(예: '질산은') 질문 맥락에 맞는 물질을 골라 답하고, 어느 쪽인지 한 줄로 밝히십시오.`;
+
+async function fetchSections(origin, chemId) {
+  const res = await fetch(`${origin}/api/msds?chemId=${encodeURIComponent(chemId)}`);
+  if (!res.ok) throw new Error('MSDS_UNAVAILABLE');
+  return (await res.json()).sections;
+}
+
+const materialText = (sections, cap) => MSDS_SECTIONS.map(n => (sections[n] || [])
+  .filter(it => it.detail && !/^[|\s]*자료\s*없음[|\s]*$/.test(it.detail))
+  .map(it => `${it.name}: ${it.detail.replace(/\|/g, ' / ')}`)
+  .join('\n')).filter(Boolean).join('\n\n').slice(0, cap);
+
+/** KOSHA MSDS of the chemicals named in the question (school catalog, aliases, CAS). Misses are skipped. */
+export async function lookupChemicals(origin, question) {
+  const named = findChemicals(question, casListData);
+  const found = await Promise.all(named.map(async ({ cas, name }) => {
+    try {
+      const res = await fetch(`${origin}/api/msds?q=${encodeURIComponent(cas)}`);
+      const item = res.ok ? (await res.json()).items?.find(i => i.cas === cas) : null;
+      if (!item) return null;
+      return { name, cas, material: materialText(await fetchSections(origin, item.chemId), Math.floor(9000 / named.length)) };
+    } catch {
+      return null;
+    }
+  }));
+  return found.filter(Boolean);
+}
+
+export function safetyInstruction(schoolName, guidelines, chemicals = []) {
   const base = safetyData.map(item => `카테고리: ${item.category}\n제목: ${item.title}\n내용: ${item.content}`).join('\n\n');
   const school = guidelines ? `\n\n[${schoolName} 학교별 안전 지침]\n${guidelines}` : '';
+  const msds = chemicals.length
+    ? `\n\n[질문에 나온 물질의 MSDS — 한국산업안전보건공단 발췌]\n${chemicals.map(c => `### ${c.name} (CAS ${c.cas})\n${c.material}`).join('\n\n')}\n\n${CHEMICAL_RULES}`
+    : '';
   return `당신은 ${schoolName} 과학실의 안전 전문가 '세이프(Safe)'입니다. 과학실 안전 지침과 MSDS를 바탕으로 정확하고 즉각적인 안전 조치를 안내합니다.
 
 [지침 데이터]
-${base}${school}
+${base}${school}${msds}
 
 ${RULES}`;
 }
 
 async function msdsInstruction(origin, chemId, schoolName) {
-  const res = await fetch(`${origin}/api/msds?chemId=${encodeURIComponent(chemId)}`);
-  if (!res.ok) throw new Error('MSDS_UNAVAILABLE');
-  const { sections } = await res.json();
-  const material = MSDS_SECTIONS.map(n => (sections[n] || [])
-    .filter(it => it.detail && !/^[|\s]*자료\s*없음[|\s]*$/.test(it.detail))
-    .map(it => `${it.name}: ${it.detail.replace(/\|/g, ' / ')}`)
-    .join('\n')).filter(Boolean).join('\n\n').slice(0, 8000);
+  const material = materialText(await fetchSections(origin, chemId), 8000);
   return `당신은 ${schoolName} 과학실의 안전 전문가 '세이프(Safe)'입니다. 학생이 지금 보고 있는 물질에 대해 질문합니다.
 아래 [물질 자료]는 한국산업안전보건공단(KOSHA) 물질안전보건자료(MSDS) 발췌입니다. 이 자료에만 근거해 답하십시오.
 
@@ -144,8 +178,14 @@ export default async (req) => {
   if (chemId && !/^\d{1,10}$/.test(chemId)) return json({ error: 'BAD_REQUEST', message: '물질 정보가 올바르지 않습니다.' }, 400);
 
   let systemInstruction;
+  let chemicals = [];
   try {
-    systemInstruction = chemId ? await msdsInstruction(self, chemId, schoolName) : safetyInstruction(schoolName, guidelines);
+    if (chemId) {
+      systemInstruction = await msdsInstruction(self, chemId, schoolName);
+    } else {
+      chemicals = await lookupChemicals(self, question);
+      systemInstruction = safetyInstruction(schoolName, guidelines, chemicals);
+    }
   } catch {
     return json({ error: 'MSDS_UNAVAILABLE', message: '이 물질의 MSDS 자료를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.' }, 502);
   }
@@ -156,7 +196,7 @@ export default async (req) => {
       contents: maskPersonal(question),
       config: { systemInstruction, thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
     });
-    return json(result);
+    return json({ ...result, chemicals: chemicals.map(({ name, cas }) => ({ name, cas })) });
   } catch (error) {
     return json({ error: 'AI_FAILED', message: error.message, notices: error.notices || [] }, 502);
   }
