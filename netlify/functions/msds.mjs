@@ -7,10 +7,15 @@ const BASE = 'https://apis.data.go.kr/B552468/msdschem1';
 const CAS_RE = /^\d{2,7}-\d{2}-\d$/;
 
 const ENTITIES = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
-const decode = (s) => s
-  .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+const unescape = (s) => s
   .replace(/&(lt|gt|amp|quot|apos);/g, (_, e) => ENTITIES[e])
   .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(n));
+// KOSHA double-escapes some text ("&amp;lt;19.6%"), so unescape until stable.
+const decode = (s) => {
+  let out = s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1');
+  for (let prev = ''; prev !== out;) { prev = out; out = unescape(out); }
+  return out;
+};
 
 const tag = (xml, name) => {
   const m = xml.match(new RegExp(`<${name}>([\\s\\S]*?)</${name}>`));

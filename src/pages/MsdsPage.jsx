@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Search, Loader2, AlertCircle, List, ExternalLink, ShieldAlert, FileText, ChevronRight, ArrowLeft } from 'lucide-react';
+import { Search, Loader2, AlertCircle, List, ExternalLink, FileText, ChevronRight, ArrowLeft } from 'lucide-react';
 import { casListData } from '../data/casListData';
+import MsdsSummary from '../components/MsdsSummary';
 
 const SECTION_TITLES = [
   '화학제품과 회사에 관한 정보', '유해성·위험성', '구성성분의 명칭 및 함유량', '응급조치 요령',
@@ -8,13 +9,6 @@ const SECTION_TITLES = [
   '물리화학적 특성', '안정성 및 반응성', '독성에 관한 정보', '환경에 미치는 영향',
   '폐기시 주의사항', '운송에 필요한 정보', '법적 규제현황', '그 밖의 참고사항',
 ];
-// Opened by default: what a student needs first in an accident.
-const OPEN_BY_DEFAULT = [2, 4, 6];
-
-const GHS_NAMES = {
-  1: '폭발성', 2: '인화성', 3: '산화성', 4: '고압가스', 5: '부식성',
-  6: '급성 독성', 7: '경고(자극성 등)', 8: '건강 유해성', 9: '수생환경 유해성',
-};
 
 const koshaSearchUrl = (keyword) =>
   `https://msds.kosha.or.kr/MSDSInfo/kcic/msdssearchAll.do?searchKeyword=${encodeURIComponent(keyword)}&listType=all`;
@@ -38,8 +32,6 @@ async function api(params) {
   if (!res.ok || body.error) throw new Error(body.error || 'UPSTREAM');
   return body;
 }
-
-const findItem = (items, word) => items?.find(it => it.name.includes(word) && it.detail);
 
 export default function MsdsPage() {
   const [query, setQuery] = useState('');
@@ -87,15 +79,11 @@ export default function MsdsPage() {
     runSearch(item.cas);
   };
 
-  const formulaFor = (cas) => casListData.find(c => c.cas === cas)?.formula;
-  const hazard = sections?.[2];
-  const pictogram = findItem(hazard, '그림문자');
-  const ghsCodes = [...new Set((pictogram?.detail.match(/GHS0?([1-9])/g) || []).map(c => Number(c.replace(/\D/g, '').slice(-1))))];
-  const signal = findItem(hazard, '신호어');
-  const hStatements = findItem(hazard, '유해·위험문구') || findItem(hazard, '유해위험문구');
+  // KOSHA sometimes names a substance in English (e.g. "Sodium"); prefer the school catalog's Korean name.
+  const local = (cas) => casListData.find(c => c.cas === cas);
 
   return (
-    <div className="max-w-4xl mx-auto pb-20 sm:px-4">
+    <div className="max-w-6xl mx-auto pb-20 sm:px-4">
       <div className="mb-6 sm:mb-8">
         <h1 className="text-2xl sm:text-4xl font-black text-gray-900 tracking-tight flex items-center gap-3">
           <span className="inline-flex items-center justify-center w-11 h-11 sm:w-14 sm:h-14 rounded-2xl bg-indigo-600 text-white shrink-0">
@@ -157,7 +145,7 @@ export default function MsdsPage() {
               <li key={item.chemId}>
                 <button onClick={() => openDetail(item)} className="w-full flex items-center gap-3 px-4 py-4 text-left active:bg-indigo-50">
                   <div className="min-w-0 flex-grow">
-                    <div className="font-bold text-gray-900">{item.name}</div>
+                    <div className="font-bold text-gray-900">{local(item.cas)?.name || item.name}</div>
                     <div className="text-xs text-gray-500 font-mono mt-0.5">CAS {item.cas || '-'} · 갱신 {item.lastDate || '-'}</div>
                   </div>
                   <ChevronRight className="w-5 h-5 text-gray-300 shrink-0" />
@@ -193,42 +181,29 @@ export default function MsdsPage() {
             </button>
           )}
 
-          <div className="bg-slate-900 text-white rounded-2xl p-5 sm:p-8">
-            <h2 className="text-2xl sm:text-4xl font-black tracking-tight">{selected.name}</h2>
-            <p className="text-slate-300 text-sm font-mono mt-2">
-              CAS {selected.cas || '-'}{formulaFor(selected.cas) ? ` · ${formulaFor(selected.cas)}` : ''}
-            </p>
-            <p className="text-slate-400 text-xs mt-1">최종 갱신일 {selected.lastDate || '-'} · 출처: 한국산업안전보건공단</p>
+          <div className="bg-slate-900 text-white rounded-2xl p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
+            <div>
+              <h2 className="text-2xl sm:text-3xl font-black tracking-tight">{local(selected.cas)?.name || selected.name}</h2>
+              <p className="text-slate-300 text-sm font-mono mt-1">
+                CAS {selected.cas || '-'}{local(selected.cas)?.formula ? ` · ${local(selected.cas).formula}` : ''}
+              </p>
+              <p className="text-slate-400 text-xs mt-1">최종 갱신일 {selected.lastDate || '-'} · 출처: 한국산업안전보건공단</p>
+            </div>
             <a href={koshaDetailUrl(selected.chemId)} target="_blank" rel="noopener noreferrer"
-              className="mt-4 inline-flex items-center gap-2 h-11 px-4 rounded-xl bg-white text-slate-900 font-black text-sm">
+              className="inline-flex items-center justify-center gap-2 h-11 px-4 rounded-xl bg-white text-slate-900 font-black text-sm shrink-0">
               <ExternalLink className="w-4 h-4" /> KOSHA 원문 보기
             </a>
           </div>
 
-          {(pictogram || signal || hStatements) && (
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 space-y-3">
-              <h3 className="font-black text-amber-900 flex items-center gap-2"><ShieldAlert className="w-5 h-5" /> 핵심 경고 표지</h3>
-              {ghsCodes.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {ghsCodes.map(c => (
-                    <span key={c} className="px-3 py-1.5 rounded-lg bg-white border border-amber-300 text-sm font-bold text-amber-900">
-                      GHS0{c} {GHS_NAMES[c]}
-                    </span>
-                  ))}
-                </div>
-              )}
-              {signal && <p className="text-lg font-black text-red-700">신호어: {signal.detail}</p>}
-              {hStatements && <p className="whitespace-pre-wrap text-sm text-amber-950 leading-relaxed">{hStatements.detail}</p>}
-              {pictogram && ghsCodes.length === 0 && <p className="whitespace-pre-wrap text-sm text-amber-950">그림문자: {pictogram.detail}</p>}
-            </div>
-          )}
+          <MsdsSummary sections={sections} />
 
+          <h3 className="font-black text-gray-900 pt-4">전체 원문 (16개 항목)</h3>
           <div className="space-y-2">
             {SECTION_TITLES.map((title, i) => {
               const n = i + 1;
               const items = sections[n] || [];
               return (
-                <details key={n} open={OPEN_BY_DEFAULT.includes(n)} className="group bg-white rounded-2xl border border-gray-100 overflow-hidden">
+                <details key={n} className="group bg-white rounded-2xl border border-gray-100 overflow-hidden">
                   <summary className="flex items-center justify-between gap-3 px-4 sm:px-6 min-h-14 cursor-pointer font-black text-gray-900 list-none">
                     <span>{n}. {title}</span>
                     <ChevronRight className="w-5 h-5 text-gray-400 shrink-0 transition-transform group-open:rotate-90" />
@@ -239,7 +214,7 @@ export default function MsdsPage() {
                     ) : items.map((it, j) => (
                       <div key={j} style={{ paddingLeft: `${(it.level - 1) * 12}px` }}>
                         <div className="text-sm font-bold text-gray-800">{it.name}</div>
-                        {it.detail && <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed mt-0.5">{it.detail}</p>}
+                        {it.detail && <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed mt-0.5">{it.detail.split('|').map(s => s.trim()).filter(Boolean).join('\n')}</p>}
                       </div>
                     ))}
                   </div>
