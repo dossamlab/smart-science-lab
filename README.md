@@ -11,7 +11,7 @@
 |---|---|---|
 | 화면 | `src/` | Vite + React. 휴대폰은 하단 탭 바, 태블릿·PC는 상단 메뉴 |
 | MSDS 조회 | `netlify/functions/msds.mjs` | 안전보건공단(KOSHA) MSDS Open API 프록시. 결과를 Netlify CDN에 30일 캐시 |
-| AI 비서 | `netlify/functions/ai.mjs` | Gemini 3.8 → 3.7 → 3.6 → 3.5 Flash 순서로 호출, 넘어갈 때마다 원인을 화면에 안내. 전화·주민번호는 가려서 보낸다 |
+| AI 비서 | `netlify/functions/ai.mjs` | Gemini 3.8 → 3.7 → 3.6 → 3.5 Flash 순서로 호출, 넘어갈 때마다 원인을 화면에 안내. 전화·주민번호는 가려서 보낸다. 앞의 대화 3개를 함께 보내 이어지는 질문도 같은 물질의 MSDS로 답하고, 시약병 라벨 사진은 먼저 물질을 읽어 낸 뒤(호출 2회) MSDS로 답한다. 과학실과 관계없는 질문·위험물 제조법은 거절한다 |
 | 관리자 PIN | `netlify/functions/admin.mjs` | 관리자 설정·안전점검 화면 잠금 |
 | 예약·보유 시약·안전점검 | `apps-script/Code.gs` | 스프레드시트에 붙은 Apps Script 웹 앱 |
 | 오프라인 | `public/sw.js` | 와이파이가 끊겨도 SOS·안전 지침·이미 본 MSDS가 열린다 |
@@ -64,4 +64,6 @@ npm run build
 
 - 예약 조회 응답에는 이름을 가려서(홍*동) 내보내고 학번은 내보내지 않는다. 학번은 반납·취소 본인 확인에만 쓴다
 - AI에 보내는 질문과 학교 지침에서 전화번호·주민번호를 가린다. 질문 입력란에 개인정보 입력 금지 안내가 있다
+- 시약병 사진은 Gemini에만 보내고 어디에도 저장하지 않는다. 화면에서 라벨만 찍고 얼굴·이름표는 빼라고 안내한다. 무료 등급 Gemini API에 보낸 내용은 Google이 서비스 개선에 쓸 수 있다
+- 대화는 그 브라우저 탭(sessionStorage)에만 남아 MSDS를 보고 돌아와도 이어지고, 탭을 닫거나 '새 대화'를 누르면 지워진다(공용 태블릿)
 - 학교 자체 안전관리 계획(`school_manual`)은 번들에 넣지 않는다

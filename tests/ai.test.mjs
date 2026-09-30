@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { default: handler, generateWithFallback, maskPersonal, MODEL_CHAIN, lookupChemicals, safetyInstruction } = await import('../netlify/functions/ai.mjs');
+const { default: handler, generateWithFallback, maskPersonal, MODEL_CHAIN, lookupChemicals, safetyInstruction, parseHistory, parseIdentified } = await import('../netlify/functions/ai.mjs');
+const { splitUrgent } = await import('../src/utils/ai.js');
 
 const err = (status, message = 'x') => Object.assign(new Error(message), { status });
 const fakeAi = (plan) => {
@@ -82,6 +83,52 @@ test('chemicals named in a question are looked up in KOSHA and put into the prom
   assert.ok(!safetyInstruction('청학고', '', []).includes('물질별 답변 규칙'));
 
   assert.deepEqual(await lookupChemicals('https://lab.example', '실험실에서 넘어졌어요'), []);
+
+  // Follow-ups and photos add chemicals by CAS, after the ones the question itself names.
+  const follow = await lookupChemicals('https://lab.example', '그럼 눈에 들어가면요?', ['7647-01-0']);
+  assert.deepEqual(follow.map(c => [c.name, c.cas]), [['염화 수소(염산)', '7647-01-0']]);
+  const mixed = await lookupChemicals('https://lab.example', '수산화나트륨은요?', ['7647-01-0', '1310-73-2']);
+  assert.deepEqual(mixed.map(c => c.cas), ['1310-73-2', '7647-01-0']);
+});
+
+test('history is trimmed, masked and carries only CAS numbers', () => {
+  const h = parseHistory([
+    { question: '처음 질문', answer: '처음 답' },
+    { question: '담임 010-0000-0000에게 알려야 해요?', answer: 'x'.repeat(5000), chemicals: ['7647-01-0', ' 1310-73-2 ', '1;drop', 7] },
+    { question: '셋째', answer: '답3' },
+    { question: '넷째', answer: '답4', chemicals: 'nope' },
+    { question: '', answer: '빈 질문' }, 'junk', null,
+  ]);
+  assert.equal(h.length, 3);
+  assert.equal(h[0].question, '담임 [전화번호]에게 알려야 해요?');
+  assert.equal(h[0].answer.length, 1500);
+  assert.deepEqual(h[0].cas, ['7647-01-0', '1310-73-2']);
+  assert.deepEqual(h[2].cas, []);
+  assert.deepEqual(parseHistory('nope'), []);
+});
+
+test('a label photo keeps a CAS number only when its check digit holds, else resolves the name', () => {
+  assert.deepEqual(parseIdentified(JSON.stringify({ chemicals: [
+    { name: '수산화 나트륨', cas: '1310-73-2' },
+    { name: '염산', cas: '7647-01-1' },
+    { name: '알 수 없는 시약', cas: '' },
+  ] })), [
+    { name: '수산화 나트륨', cas: '1310-73-2' },
+    { name: '염산', cas: '7647-01-0' },
+    { name: '알 수 없는 시약', cas: '' },
+  ]);
+  assert.deepEqual(parseIdentified('[{"name":"에탄올","cas":"64-17-5"}]'), [{ name: '에탄올', cas: '64-17-5' }]);
+  assert.deepEqual(parseIdentified('라벨이 없습니다'), []);
+});
+
+test('an emergency answer\'s "지금 바로:" line is split off, markdown or not', () => {
+  assert.deepEqual(splitUrgent('지금 바로: 흐르는 물로 15분 이상 씻으세요.\n1. 선생님께 알리세요.'),
+    { urgent: '흐르는 물로 15분 이상 씻으세요.', rest: '1. 선생님께 알리세요.' });
+  assert.deepEqual(splitUrgent('**지금 바로:** 씻으세요.\n\n1. 알리기'), { urgent: '씻으세요.', rest: '1. 알리기' });
+  assert.equal(splitUrgent('**지금 바로**: 씻으세요.').urgent, '씻으세요.');
+  assert.equal(splitUrgent('\n🚨 지금 바로: 대피하세요.').urgent, '대피하세요.');
+  const plain = '염산은 강산입니다.\n지금 바로: 아님';
+  assert.deepEqual(splitUrgent(plain), { urgent: '', rest: plain });
 });
 
 const post = (body, headers = {}) => handler(new Request('https://lab.example/api/ai', {
@@ -101,4 +148,7 @@ test('request guards run before any Gemini call', async () => {
   assert.equal((await post({ question: '' })).status, 400);
   assert.equal((await post({ question: 'a'.repeat(501) })).status, 400);
   assert.equal((await post({ question: 'x', chemId: '1;drop' })).status, 400);
+  assert.equal((await post({ question: 'x', image: { mimeType: 'image/gif', data: 'AAAA' } })).status, 400);
+  assert.equal((await post({ question: 'x', image: { mimeType: 'image/jpeg', data: 'not base64!' } })).status, 400);
+  assert.equal((await post({ question: 'x', image: { mimeType: 'image/jpeg', data: 'A'.repeat(1_500_004) } })).status, 400);
 });
